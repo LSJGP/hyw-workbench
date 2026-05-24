@@ -14,6 +14,7 @@ hyw.env.local
 .idea/
 *.code-workspace
 .cursor/
+.cache/
 
 # --- Python ---
 __pycache__/
