@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hywgrading 批量仿真</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --ok: #22c55e;
+      --fail: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.875rem; }
+    main {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 0;
+      min-height: calc(100vh - 72px);
+    }
+    @media (max-width: 960px) {
+      main { grid-template-columns: 1fr; }
+    }
+    aside {
+      padding: 1rem 1.25rem;
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      max-height: calc(100vh - 72px);
+    }
+    section { margin-bottom: 1.25rem; }
+    section h2 {
+      margin: 0 0 0.5rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
+    select, input[type="text"], input[type="number"] {
+      width: 100%;
+      padding: 0.45rem 0.6rem;
+      margin-bottom: 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .checks {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.5rem;
+      background: var(--bg);
+    }
+    .checks label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text);
+      margin: 0.25rem 0;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .checks input { width: auto; margin: 0; }
+    .inline { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .inline input { width: auto; }
+    button.primary {
+      width: 100%;
+      padding: 0.65rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .content {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .status-bar {
+      padding: 0.75rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    #log {
+      flex: 1;
+      margin: 0;
+      padding: 1rem 1.25rem;
+      overflow: auto;
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      white-space: pre-wrap;
+      background: #0a0e12;
+      min-height: 300px;
+    }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .badge.ok { background: #14532d; color: var(--ok); }
+    .badge.fail { background: #450a0a; color: var(--fail); }
+    .badge.run { background: #1e3a5f; color: #93c5fd; }
+    .hint { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
+    #results { padding: 0 1.25rem 1rem; font-size: 0.85rem; }
+    #results table { width: 100%; border-collapse: collapse; }
+    #results th, #results td {
+      text-align: left;
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Hywgrading 批量仿真控制台</h1>
+    <p>选择场景 · Planner · Metrics · 日志/GIF 参数，调用本地 <code>run_sim.py</code> / <code>viz_sim.py</code></p>
+  </header>
+  <main>
+    <aside>
+      <section>
+        <h2>场景 scenarios/</h2>
+        <div id="scenario-actions" class="inline">
+          <button type="button" id="sel-all" style="font-size:0.75rem">全选</button>
+          <button type="button" id="sel-none" style="font-size:0.75rem">清空</button>
+        </div>
+        <div class="checks" id="scenario-list">加载中…</div>
+      </section>
+
+      <section>
+        <h2>Planner</h2>
+        <label for="planner">规划器</label>
+        <select id="planner"></select>
+        <div class="row2">
+          <div>
+            <label for="reference-source">参考线</label>
+            <select id="reference-source"></select>
+          </div>
+          <div>
+            <label for="reference-step">参考步长 (m)</label>
+            <input type="number" id="reference-step" step="0.1" min="0.1" />
+          </div>
+        </div>
+        <label for="desired-speed">期望速度 (m/s)</label>
+        <input type="number" id="desired-speed" step="0.1" />
+      </section>
+
+      <section>
+        <h2>Metrics</h2>
+        <div class="checks" id="metric-list"></div>
+        <label for="cpp-mode">grading 模式</label>
+        <select id="cpp-mode"></select>
+      </section>
+
+      <section>
+        <h2>仿真 / 日志</h2>
+        <div class="row2">
+          <div>
+            <label for="dt">dt (s)</label>
+            <input type="number" id="dt" step="0.01" />
+          </div>
+          <div>
+            <label for="max-seconds">max-seconds (0=全长)</label>
+            <input type="number" id="max-seconds" step="0.1" min="0" />
+          </div>
+        </div>
+        <label for="log-level">spdlog 等级</label>
+        <select id="log-level"></select>
+        <label for="log-dir">log-dir（可选，空=默认 output/log）</label>
+        <input type="text" id="log-dir" placeholder="" />
+        <div class="inline">
+          <input type="checkbox" id="run-grading" checked />
+          <label for="run-grading" style="margin:0">运行 grading</label>
+        </div>
+      </section>
+
+      <section>
+        <h2>GIF 可视化</h2>
+        <div class="inline">
+          <input type="checkbox" id="make-gif" checked />
+          <label for="make-gif" style="margin:0">生成 GIF</label>
+        </div>
+        <div class="row2">
+          <div>
+            <label for="gif-fps">fps</label>
+            <input type="number" id="gif-fps" min="1" />
+          </div>
+          <div>
+            <label for="gif-dpi">dpi</label>
+            <input type="number" id="gif-dpi" min="50" />
+          </div>
+        </div>
+        <label for="gif-reference-step">viz 参考步长 (m)</label>
+        <input type="number" id="gif-reference-step" step="0.1" />
+      </section>
+
+      <button class="primary" id="run-btn">开始批量运行</button>
+      <p class="hint" id="path-hint"></p>
+    </aside>
+
+    <div class="content">
+      <div class="status-bar">
+        状态：<span id="status" class="badge">空闲</span>
+        <span id="job-id" style="margin-left:0.75rem;color:var(--muted)"></span>
+      </div>
+      <pre id="log">等待任务…</pre>
+      <div id="results"></div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let pollTimer = null;
+
+    async function loadMeta() {
+      const r = await fetch("/api/meta");
+      const meta = await r.json();
+
+      const scenBox = $("scenario-list");
+      scenBox.innerHTML = "";
+      if (!meta.scenarios.length) {
+        scenBox.textContent = "scenarios/ 下无有效场景（需 scenario_meta + dynamic_objects + lane_graph）";
+      }
+      meta.scenarios.forEach((s) => {
+        const lab = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = s.name;
+        cb.checked = true;
+        cb.dataset.id = s.scenario_id || "";
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + s.name + (s.scenario_id ? ` (${s.scenario_id.slice(0,8)}…)` : "")));
+        scenBox.appendChild(lab);
+      });
+
+      $("planner").innerHTML = meta.planners.map((p) => `<option value="${p}">${p}</option>`).join("");
+      $("reference-source").innerHTML = meta.reference_sources.map((p) => `<option value="${p}">${p}</option>`).join("");
+      $("cpp-mode").innerHTML = meta.cpp_modes.map((p) => `<option value="${p}">${p}</option>`).join("");
+      $("log-level").innerHTML = meta.log_levels.map((p) => `<option value="${p}">${p}</option>`).join("");
+
+      const mbox = $("metric-list");
+      mbox.innerHTML = "";
+      meta.metrics.forEach((m) => {
+        const lab = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = m.name;
+        cb.checked = meta.defaults.metrics.includes(m.name);
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + m.name));
+        mbox.appendChild(lab);
+      });
+
+      const d = meta.defaults;
+      $("planner").value = d.planner;
+      $("reference-source").value = d.reference_source;
+      $("reference-step").value = d.reference_step;
+      $("desired-speed").value = d.desired_speed;
+      $("dt").value = d.dt;
+      $("cpp-mode").value = d.cpp_mode;
+      $("log-level").value = d.log_level;
+      $("gif-fps").value = d.gif_fps;
+      $("gif-dpi").value = d.gif_dpi;
+      $("gif-reference-step").value = d.reference_step;
+      $("make-gif").checked = d.make_gif;
+      $("run-grading").checked = d.run_grading;
+
+      const p = meta.paths;
+      $("path-hint").textContent =
+        (p.grading_bin_exists ? "grading_main ✓" : "grading_main ✗ 需 bazel build") +
+        " · " + p.sim_runner_hint;
+    }
+
+    function selectedScenarios() {
+      return [...document.querySelectorAll("#scenario-list input:checked")].map((e) => e.value);
+    }
+    function selectedMetrics() {
+      return [...document.querySelectorAll("#metric-list input:checked")].map((e) => e.value);
+    }
+
+    $("sel-all").onclick = () => document.querySelectorAll("#scenario-list input").forEach((e) => (e.checked = true));
+    $("sel-none").onclick = () => document.querySelectorAll("#scenario-list input").forEach((e) => (e.checked = false));
+
+    async function startJob() {
+      const scenarios = selectedScenarios();
+      if (!scenarios.length) {
+        alert("请至少选择一个场景");
+        return;
+      }
+      const body = {
+        scenarios,
+        planner: $("planner").value,
+        metrics: selectedMetrics(),
+        reference_source: $("reference-source").value,
+        reference_step: parseFloat($("reference-step").value),
+        desired_speed: parseFloat($("desired-speed").value),
+        dt: parseFloat($("dt").value),
+        max_seconds: parseFloat($("max-seconds").value || "0"),
+        cpp_mode: $("cpp-mode").value,
+        log_level: $("log-level").value,
+        log_dir: $("log-dir").value.trim(),
+        run_grading: $("run-grading").checked,
+        make_gif: $("make-gif").checked,
+        gif_fps: parseInt($("gif-fps").value, 10),
+        gif_dpi: parseInt($("gif-dpi").value, 10),
+        gif_reference_step: parseFloat($("gif-reference-step").value),
+      };
+
+      $("run-btn").disabled = true;
+      $("status").textContent = "提交中…";
+      $("status").className = "badge run";
+      $("log").textContent = "";
+      $("results").innerHTML = "";
+
+      const r = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const { job_id, error } = await r.json();
+      if (!r.ok) {
+        alert(error || "启动失败");
+        $("run-btn").disabled = false;
+        $("status").textContent = "空闲";
+        return;
+      }
+      $("job-id").textContent = "job: " + job_id;
+      pollJob(job_id);
+    }
+
+    function renderResults(result) {
+      if (!result || !result.scenarios) return;
+      let html = "<table><tr><th>场景</th><th>sim</th><th>grading</th><th>gif</th></tr>";
+      for (const s of result.scenarios) {
+        const sim = s.sim_rc === 0 ? "OK" : "FAIL";
+        const gr = s.passed === true ? "PASS" : s.passed === false ? "FAIL" : "-";
+        const gif = s.viz_rc === 0 ? "OK" : s.viz_rc == null ? "-" : "FAIL";
+        html += `<tr><td>${s.scenario}</td><td>${sim}</td><td>${gr}</td><td>${gif}</td></tr>`;
+      }
+      html += "</table><p>总耗时 ${result.elapsed_s}s</p>";
+      $("results").innerHTML = html;
+    }
+
+    function pollJob(jobId) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        const r = await fetch("/api/jobs/" + jobId);
+        const job = await r.json();
+        $("log").textContent = (job.log || []).join("\n");
+        $("log").scrollTop = $("log").scrollHeight;
+
+        if (job.status === "running") {
+          $("status").textContent = "运行中";
+          $("status").className = "badge run";
+          return;
+        }
+        clearInterval(pollTimer);
+        pollTimer = null;
+        $("run-btn").disabled = false;
+        if (job.status === "done") {
+          $("status").textContent = "完成";
+          $("status").className = "badge ok";
+          renderResults(job.result);
+        } else {
+          $("status").textContent = "错误";
+          $("status").className = "badge fail";
+        }
+      }, 800);
+    }
+
+    $("run-btn").onclick = startJob;
+    loadMeta().catch((e) => {
+      $("scenario-list").textContent = "无法加载 /api/meta: " + e;
+    });
+  </script>
+</body>
+</html>

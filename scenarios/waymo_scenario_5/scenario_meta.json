@@ -1,0 +1,42 @@
+{
+  "source": "/home/gokousuika/hywgrading/data/training.tfrecord-00244-of-01000",
+  "scenario_id": "df539f561a945666",
+  "scenario_index": 5,
+  "world_offset": {
+    "x": -3234.8957597097215,
+    "y": 12833.647767742827,
+    "z": 78.38539392895514
+  },
+  "init_pose": {
+    "x": 0.0,
+    "y": 0.0,
+    "yaw": 1.5635098218917847
+  },
+  "goal_pose": {
+    "x": 0.1831663690941241,
+    "y": 14.432926606312321,
+    "yaw": 1.556990385055542
+  },
+  "bbox": {
+    "xmin": -104.35263535616332,
+    "ymin": -157.1681687314831,
+    "xmax": 114.19243510106662,
+    "ymax": 124.99116751891597
+  },
+  "stats": {
+    "lanes": 180,
+    "road_lines": 43,
+    "road_edges": 34,
+    "crosswalks": 8,
+    "stop_signs": 0,
+    "driveways": 5,
+    "speed_bumps": 4,
+    "timestamps": 91,
+    "duration_s": 9.00011,
+    "current_time_index": 10,
+    "tracks_total": 18,
+    "tracks_non_sdc_by_type": {
+      "VEHICLE": 17
+    }
+  }
+}

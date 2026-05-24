@@ -1,0 +1,10 @@
+# waymo_sim has zero hard third-party deps for the core loop; everything is
+# pure Python + stdlib. The list below covers optional helpers only.
+#
+# Required for converting Waymo TFRecords (used outside this directory):
+#   tensorflow
+#   waymo-open-dataset-tf-2-12-0
+#
+# The default closed-loop sim (stdlib only) uses `idm_pure_pursuit`.
+# The optional `frenet_optimal` planner (PythonRobotics-style Frenet sampling) needs:
+numpy>=1.23

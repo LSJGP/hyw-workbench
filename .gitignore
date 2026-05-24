@@ -1,0 +1,11 @@
+output/
+data/*.tfrecord*
+data/*.tfrecord
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+tools/.venv/
+compile_commands.json
+.env
+.env.local
