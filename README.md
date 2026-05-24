@@ -19,10 +19,8 @@
 ```bash
 # 可选
 source hyw.env
-
+# 没别的问题直接开前端就行
 ./start_dashboard.sh
 # 或 CLI
 python3 tools/batch_run_scenarios.py --scenarios waymo_scenario_5
 ```
-
-构建顺序：先 `hyw-grading`，再 `hyw-sim`（见 `~/hyw/README.md`）。
