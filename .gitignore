@@ -1,11 +1,47 @@
+# --- 仿真 / 评分 / 批跑输出（运行时生成）---
 output/
-data/*.tfrecord*
-data/*.tfrecord
+!output/.gitkeep
+
+# --- 本地环境与密钥（只提交 hyw.env.example）---
+hyw.env
+hyw.env.local
+.env
+.env.*
+!.env.example
+
+# --- IDE / 编辑器（个人配置不进库）---
+.vscode/
+.idea/
+*.code-workspace
+.cursor/
+
+# --- Python ---
 __pycache__/
 *.py[cod]
+*$py.class
+.Python
 .venv/
 venv/
 tools/.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- 大数据（Waymo tfrecord 等，见 data/README.md）---
+data/*.tfrecord
+data/*.tfrecord.*
+data/**/*.tfrecord
+data/**/*.tfrecord.*
+
+# --- 工具链生成（Bazel / clangd 合并产物）---
 compile_commands.json
-.env
-.env.local
+
+# --- 日志与临时文件 ---
+*.log
+sim_*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+Thumbs.db
