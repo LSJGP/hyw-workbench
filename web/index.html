@@ -14,6 +14,9 @@
       --accent: #3b82f6;
       --ok: #22c55e;
       --fail: #ef4444;
+      --warn: #fbbf24;
+      --console-w: 340px;
+      --log-w: 420px;
     }
     * { box-sizing: border-box; }
     body {
@@ -22,127 +25,315 @@
       background: var(--bg);
       color: var(--text);
       line-height: 1.5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
     header {
-      padding: 1rem 1.5rem;
+      flex-shrink: 0;
+      padding: 0.75rem 1.25rem;
       border-bottom: 1px solid var(--border);
       background: var(--panel);
     }
-    header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
-    header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.875rem; }
+    header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+    header p { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; }
+
     main {
+      flex: 1;
       display: grid;
-      grid-template-columns: 380px 1fr;
-      gap: 0;
-      min-height: calc(100vh - 72px);
+      grid-template-columns: var(--console-w) 1fr var(--log-w);
+      min-height: 0;
     }
-    @media (max-width: 960px) {
-      main { grid-template-columns: 1fr; }
+    @media (max-width: 1200px) {
+      main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; overflow-y: auto; }
+      body { overflow: auto; height: auto; min-height: 100vh; }
     }
-    aside {
-      padding: 1rem 1.25rem;
+
+    /* ── 左：控制台 ── */
+    .console {
       border-right: 1px solid var(--border);
       overflow-y: auto;
-      max-height: calc(100vh - 72px);
+      padding: 0.85rem 1rem;
+      background: var(--panel);
     }
-    section { margin-bottom: 1.25rem; }
+    section { margin-bottom: 1rem; }
     section h2 {
-      margin: 0 0 0.5rem;
-      font-size: 0.75rem;
+      margin: 0 0 0.45rem;
+      font-size: 0.7rem;
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--muted);
     }
-    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
+    label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 0.15rem; }
     select, input[type="text"], input[type="number"] {
       width: 100%;
-      padding: 0.45rem 0.6rem;
-      margin-bottom: 0.6rem;
+      padding: 0.4rem 0.55rem;
+      margin-bottom: 0.5rem;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: var(--bg);
       color: var(--text);
+      font-size: 0.85rem;
     }
-    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
     .checks {
-      max-height: 200px;
+      max-height: 160px;
       overflow-y: auto;
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0.5rem;
+      padding: 0.45rem;
       background: var(--bg);
     }
     .checks label {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.45rem;
       color: var(--text);
-      margin: 0.25rem 0;
-      font-size: 0.85rem;
+      margin: 0.2rem 0;
+      font-size: 0.82rem;
       cursor: pointer;
     }
     .checks input { width: auto; margin: 0; }
-    .inline { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .inline { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.45rem; }
     .inline input { width: auto; }
     button.primary {
       width: 100%;
-      padding: 0.65rem;
+      padding: 0.6rem;
       border: none;
       border-radius: 8px;
       background: var(--accent);
       color: #fff;
       font-weight: 600;
       cursor: pointer;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
     }
     button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    .content {
+    .hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.25rem; }
+
+    /* ── 中：播包 ── */
+    .viewer {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: #0a0e12;
+    }
+    .viewer-toolbar {
+      flex-shrink: 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      font-size: 0.85rem;
+    }
+    .viewer-toolbar label { margin: 0; white-space: nowrap; }
+    .viewer-toolbar select {
+      width: auto;
+      min-width: 180px;
+      margin: 0;
+      flex: 1;
+      max-width: 320px;
+    }
+    .viewer-toolbar input[type="number"] {
+      width: 4.5rem;
+      margin: 0;
+      padding: 0.35rem 0.45rem;
+      font-size: 0.85rem;
+    }
+    .viewer-stage {
+      flex: 1;
+      overflow: auto;
+      position: relative;
+      min-height: 200px;
+      background: #0a0e12;
+    }
+    .viewer-stage.can-pan {
+      cursor: grab;
+    }
+    .viewer-stage.can-pan.dragging {
+      cursor: grabbing;
+      user-select: none;
+    }
+    .viewer-zoom-wrap {
+      transform-origin: 0 0;
+      line-height: 0;
+      width: fit-content;
+    }
+    .viewer-zoom-wrap canvas {
+      display: block;
+      max-width: 100%;
+      max-height: calc(100vh - 260px);
+    }
+    .viewer-placeholder {
+      color: var(--muted);
+      text-align: center;
+      padding: 2rem;
+      font-size: 0.9rem;
+    }
+    .viewer-controls {
+      flex-shrink: 0;
+      padding: 0.65rem 1rem;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .frame-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .frame-nav button {
+      padding: 0.35rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .frame-nav button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .frame-nav button:disabled { opacity: 0.35; cursor: not-allowed; }
+    .frame-info {
+      min-width: 110px;
+      text-align: center;
+      font-family: ui-monospace, monospace;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .frame-slider {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .viewer-results {
+      flex-shrink: 0;
+      padding: 0.5rem 1rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.8rem;
+      max-height: 120px;
+      overflow: auto;
+    }
+    .viewer-results table { width: 100%; border-collapse: collapse; }
+    .viewer-results th, .viewer-results td {
+      text-align: left;
+      padding: 0.25rem 0.45rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .viewer-results tr.clickable { cursor: pointer; }
+    .viewer-results tr.clickable:hover { background: rgba(59, 130, 246, 0.08); }
+    .viewer-results tr.active { background: rgba(59, 130, 246, 0.15); }
+
+    /* ── 右：日志 ── */
+    .log-panel {
       display: flex;
       flex-direction: column;
       min-height: 0;
+      border-left: 1px solid var(--border);
+      background: #0a0e12;
     }
-    .status-bar {
-      padding: 0.75rem 1.25rem;
+    .log-header {
+      flex-shrink: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.6rem 1rem;
       border-bottom: 1px solid var(--border);
+      background: var(--panel);
       font-size: 0.85rem;
     }
-    #log {
+    .log-header .status-wrap { display: flex; align-items: center; gap: 0.6rem; }
+    .log-meta { color: var(--muted); font-size: 0.78rem; font-family: ui-monospace, monospace; }
+    .log-view {
       flex: 1;
-      margin: 0;
-      padding: 1rem 1.25rem;
       overflow: auto;
-      font-family: ui-monospace, monospace;
-      font-size: 0.78rem;
-      white-space: pre-wrap;
-      background: #0a0e12;
-      min-height: 300px;
+      font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+      font-size: 0.76rem;
+      line-height: 1.45;
     }
-    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .log-line {
+      display: flex;
+      min-height: 1.45em;
+      border-left: 3px solid transparent;
+    }
+    .log-line:hover { background: rgba(255, 255, 255, 0.03); }
+    .log-line.level-trace { border-left-color: #6a9955; background: rgba(106, 153, 85, 0.04); }
+    .log-line.level-debug { border-left-color: #569cd6; background: rgba(86, 156, 214, 0.04); }
+    .log-line.level-info { border-left-color: #4ec9b0; background: rgba(78, 201, 176, 0.04); }
+    .log-line.level-warning { border-left-color: #dcdcaa; background: rgba(220, 220, 170, 0.06); }
+    .log-line.level-error { border-left-color: #f44747; background: rgba(244, 71, 71, 0.07); }
+    .log-ln {
+      flex-shrink: 0;
+      width: 3.2em;
+      padding: 0 0.6rem 0 0.5rem;
+      text-align: right;
+      color: #4b5563;
+      user-select: none;
+      border-right: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.25);
+    }
+    .log-text {
+      flex: 1;
+      padding: 0 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #d4d4d4;
+    }
+    /* VS Code Dark+ log scopes (extensions/log) + Grafana-style level badges */
+    .log-level-badge {
+      border-radius: 3px;
+      padding: 0 0.35em;
+      font-weight: 600;
+      font-size: 0.92em;
+      letter-spacing: 0.02em;
+    }
+    .log-level-badge.log-trace { background: rgba(106, 153, 85, 0.22); }
+    .log-level-badge.log-debug { background: rgba(86, 156, 214, 0.22); }
+    .log-level-badge.log-info { background: rgba(78, 201, 176, 0.22); }
+    .log-level-badge.log-warning { background: rgba(220, 220, 170, 0.25); }
+    .log-level-badge.log-error { background: rgba(244, 71, 71, 0.25); }
+    .log-trace { color: #6a9955; }
+    .log-debug { color: #569cd6; }
+    .log-info { color: #4ec9b0; }
+    .log-warning { color: #dcdcaa; }
+    .log-error { color: #f44747; font-weight: 600; }
+    .log-date { color: #808080; opacity: 0.95; }
+    .log-constant { color: #b5cea8; }
+    .log-string { color: #ce9178; }
+    .log-json-key { color: #9cdcfe; }
+    .log-exception-type { color: #c586c0; font-weight: 500; }
+    .log-exception { color: #9cdcfe; }
+    .log-url { color: #4fc1ff; text-decoration: underline; text-decoration-style: dotted; }
+    .log-namespace { color: #4ec9b0; }
+    .log-section { color: #569cd6; font-weight: 600; }
+    .log-command { color: #c586c0; }
+    .log-tag { color: #4fc1ff; }
+    .log-empty { padding: 1.5rem; color: var(--muted); text-align: center; }
+
+    .badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 4px; font-size: 0.72rem; }
     .badge.ok { background: #14532d; color: var(--ok); }
     .badge.fail { background: #450a0a; color: var(--fail); }
     .badge.run { background: #1e3a5f; color: #93c5fd; }
-    .hint { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
-    #results { padding: 0 1.25rem 1rem; font-size: 0.85rem; }
-    #results table { width: 100%; border-collapse: collapse; }
-    #results th, #results td {
-      text-align: left;
-      padding: 0.35rem 0.5rem;
-      border-bottom: 1px solid var(--border);
-    }
+    .badge.idle { background: #1f2937; color: var(--muted); }
   </style>
 </head>
 <body>
   <header>
     <h1>Hywgrading 批量仿真控制台</h1>
-    <p>选择场景 · Planner · Metrics · 日志/GIF 参数，调用本地 <code>run_sim.py</code> / <code>viz_sim.py</code></p>
+    <p>左：参数配置 · 中：仿真 GIF 播包 · 右：运行日志（行号 + 高亮）</p>
   </header>
+
   <main>
-    <aside>
+    <!-- 左：控制台 -->
+    <aside class="console">
       <section>
         <h2>场景 scenarios/</h2>
-        <div id="scenario-actions" class="inline">
-          <button type="button" id="sel-all" style="font-size:0.75rem">全选</button>
-          <button type="button" id="sel-none" style="font-size:0.75rem">清空</button>
+        <div class="inline">
+          <button type="button" id="sel-all" style="font-size:0.72rem">全选</button>
+          <button type="button" id="sel-none" style="font-size:0.72rem">清空</button>
         </div>
         <div class="checks" id="scenario-list">加载中…</div>
       </section>
@@ -186,7 +377,7 @@
         </div>
         <label for="log-level">spdlog 等级</label>
         <select id="log-level"></select>
-        <label for="log-dir">log-dir（可选，空=默认 output/log）</label>
+        <label for="log-dir">log-dir（可选）</label>
         <input type="text" id="log-dir" placeholder="" />
         <div class="inline">
           <input type="checkbox" id="run-grading" checked />
@@ -218,28 +409,476 @@
       <p class="hint" id="path-hint"></p>
     </aside>
 
-    <div class="content">
-      <div class="status-bar">
-        状态：<span id="status" class="badge">空闲</span>
-        <span id="job-id" style="margin-left:0.75rem;color:var(--muted)"></span>
+    <!-- 中：播包 -->
+    <div class="viewer" id="viewer" tabindex="0">
+      <div class="viewer-toolbar">
+        <label for="gif-select">播包场景</label>
+        <select id="gif-select">
+          <option value="">— 选择 GIF —</option>
+        </select>
+        <label for="playback-mode">播放速度</label>
+        <select id="playback-mode" title="仿真原速 = 1/dt；GIF速度 = 生成 fps">
+          <option value="sim" selected>仿真原速</option>
+          <option value="gif">GIF 生成速度</option>
+          <option value="custom">自定义</option>
+        </select>
+        <label for="playback-fps">fps</label>
+        <input type="number" id="playback-fps" min="1" max="240" value="10" title="自定义模式下的播放帧率" />
+        <span id="zoom-level" class="log-meta" title="Ctrl + 滚轮缩放"></span>
+        <span id="gif-status" class="log-meta"></span>
       </div>
-      <pre id="log">等待任务…</pre>
-      <div id="results"></div>
+      <div class="viewer-stage" id="viewer-stage" title="Ctrl + 滚轮缩放；放大后按住左键拖拽平移">
+        <div class="viewer-placeholder" id="viewer-placeholder">
+          运行仿真后在此查看 GIF，或从下拉框选择已有 output/viz/*.gif<br />
+          <span style="font-size:0.8rem;color:var(--muted)">Ctrl + 滚轮缩放 · 放大后拖拽平移</span>
+        </div>
+        <div class="viewer-zoom-wrap" id="viewer-zoom-wrap" hidden>
+          <canvas id="gif-canvas"></canvas>
+        </div>
+      </div>
+      <div class="viewer-controls" id="viewer-controls" hidden>
+        <div class="frame-nav">
+          <button type="button" id="frame-first" title="首帧">⏮</button>
+          <button type="button" id="frame-prev" title="上一帧 (←)">◀ 上一帧</button>
+          <span class="frame-info" id="frame-info">0 / 0</span>
+          <button type="button" id="frame-next" title="下一帧 (→)">下一帧 ▶</button>
+          <button type="button" id="frame-last" title="末帧">⏭</button>
+          <button type="button" id="frame-play" title="播放/暂停">▶ 播放</button>
+        </div>
+        <input type="range" class="frame-slider" id="frame-slider" min="0" max="0" value="0" />
+      </div>
+      <div class="viewer-results" id="results"></div>
+    </div>
+
+    <!-- 右：日志 -->
+    <div class="log-panel">
+      <div class="log-header">
+        <div class="status-wrap">
+          <span>运行日志</span>
+          <span id="status" class="badge idle">空闲</span>
+        </div>
+        <span class="log-meta" id="log-meta">0 行</span>
+      </div>
+      <div class="log-view" id="log-view">
+        <div class="log-empty">等待任务…</div>
+      </div>
+      <div class="log-header" style="border-top:1px solid var(--border);border-bottom:none">
+        <span class="log-meta" id="job-id"></span>
+      </div>
     </div>
   </main>
 
-  <script>
+  <script type="module">
     const $ = (id) => document.getElementById(id);
+
+    /** Plain-text fallback if log-highlighter.js fails to load. */
+    function renderLogPlain(viewEl, metaEl, lines) {
+      if (!lines || !lines.length) {
+        viewEl.innerHTML = '<div class="log-empty">（无日志）</div>';
+        if (metaEl) metaEl.textContent = "0 行";
+        return;
+      }
+      viewEl.textContent = lines.join("\n");
+      if (metaEl) metaEl.textContent = `${lines.length} 行`;
+      viewEl.scrollTop = viewEl.scrollHeight;
+    }
+
+    let renderLogPanel = renderLogPlain;
     let pollTimer = null;
+
+    /* ── GIF 播包（服务端 PIL 逐帧解码，与 matplotlib 输出一致） ── */
+    let simDt = 0.1;
+    let gifGenFps = 120;
+
+    const zoomState = {
+      scale: 1,
+      panX: 0,
+      panY: 0,
+      min: 0.25,
+      max: 8,
+      dragging: false,
+      dragStartX: 0,
+      dragStartY: 0,
+      panStartX: 0,
+      panStartY: 0,
+    };
+
+    function applyViewerTransform() {
+      const wrap = $("viewer-zoom-wrap");
+      wrap.style.transform = `translate(${zoomState.panX}px, ${zoomState.panY}px) scale(${zoomState.scale})`;
+    }
+
+    function centerViewerIfFit() {
+      if (zoomState.scale !== 1 || $("viewer-zoom-wrap").hidden) return;
+      const stage = $("viewer-stage");
+      const wrap = $("viewer-zoom-wrap");
+      zoomState.panX = Math.max(0, (stage.clientWidth - wrap.offsetWidth) / 2);
+      zoomState.panY = Math.max(0, (stage.clientHeight - wrap.offsetHeight) / 2);
+      applyViewerTransform();
+    }
+
+    function updateViewerCursor() {
+      const stage = $("viewer-stage");
+      const canPan = ! $("viewer-zoom-wrap").hidden && zoomState.scale > 1;
+      stage.classList.toggle("can-pan", canPan && !zoomState.dragging);
+      stage.classList.toggle("dragging", zoomState.dragging);
+    }
+
+    function resetViewerZoom() {
+      zoomState.scale = 1;
+      zoomState.panX = 0;
+      zoomState.panY = 0;
+      zoomState.dragging = false;
+      applyViewerTransform();
+      updateZoomLabel();
+      updateViewerCursor();
+      requestAnimationFrame(centerViewerIfFit);
+    }
+
+    function updateZoomLabel() {
+      const el = $("zoom-level");
+      if (!el) return;
+      el.textContent = zoomState.scale === 1 ? "" : `${Math.round(zoomState.scale * 100)}%`;
+    }
+
+    function handleViewerWheel(e) {
+      if (!e.ctrlKey || $("viewer-zoom-wrap").hidden) return;
+      e.preventDefault();
+      const stage = $("viewer-stage");
+      const rect = stage.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const worldX = (mx - zoomState.panX) / zoomState.scale;
+      const worldY = (my - zoomState.panY) / zoomState.scale;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      zoomState.scale = Math.min(
+        zoomState.max,
+        Math.max(zoomState.min, zoomState.scale * factor)
+      );
+      zoomState.panX = mx - worldX * zoomState.scale;
+      zoomState.panY = my - worldY * zoomState.scale;
+      applyViewerTransform();
+      updateZoomLabel();
+      updateViewerCursor();
+    }
+
+    function handleViewerMouseDown(e) {
+      if ($("viewer-zoom-wrap").hidden || zoomState.scale <= 1 || e.button !== 0) return;
+      zoomState.dragging = true;
+      zoomState.dragStartX = e.clientX;
+      zoomState.dragStartY = e.clientY;
+      zoomState.panStartX = zoomState.panX;
+      zoomState.panStartY = zoomState.panY;
+      updateViewerCursor();
+      e.preventDefault();
+    }
+
+    function handleViewerMouseMove(e) {
+      if (!zoomState.dragging) return;
+      zoomState.panX = zoomState.panStartX + (e.clientX - zoomState.dragStartX);
+      zoomState.panY = zoomState.panStartY + (e.clientY - zoomState.dragStartY);
+      applyViewerTransform();
+    }
+
+    function handleViewerMouseUp() {
+      if (!zoomState.dragging) return;
+      zoomState.dragging = false;
+      updateViewerCursor();
+    }
+
+    const gifState = {
+      relFile: "",
+      frameCount: 0,
+      width: 0,
+      height: 0,
+      cache: new Map(),
+      frameDelays: [],
+      index: 0,
+      playing: false,
+      playTimer: null,
+      loadToken: 0,
+    };
+
+    function urlToRelFile(url) {
+      const idx = url.indexOf("/output/");
+      if (idx >= 0) return url.slice(idx + "/output/".length);
+      return url.replace(/^\//, "");
+    }
+
+    function getSimPlaybackFps() {
+      const dt = parseFloat($("dt").value);
+      const step = Number.isFinite(dt) && dt > 0 ? dt : simDt;
+      return Math.max(1, Math.round(1 / step));
+    }
+
+    function syncPlaybackFpsFromMode() {
+      const mode = $("playback-mode").value;
+      if (mode === "sim") {
+        $("playback-fps").value = String(getSimPlaybackFps());
+        $("playback-fps").disabled = true;
+      } else if (mode === "gif") {
+        $("playback-fps").value = String(gifGenFps);
+        $("playback-fps").disabled = true;
+      } else {
+        $("playback-fps").disabled = false;
+      }
+    }
+
+    function applyPlaybackSpeedChange() {
+      syncPlaybackFpsFromMode();
+      const wasPlaying = gifState.playing;
+      if (wasPlaying) stopPlay();
+      refreshFrameDelays();
+      if (wasPlaying) togglePlay();
+    }
+
+    function getPlaybackFps() {
+      const v = parseInt($("playback-fps").value, 10);
+      return Number.isFinite(v) && v > 0 ? v : getSimPlaybackFps();
+    }
+
+    function computeFrameDelays(playbackFps) {
+      const delayMs = Math.max(8, Math.round(1000 / playbackFps));
+      const delays = Array.from({ length: gifState.frameCount }, () => delayMs);
+      return { delays, delayMs };
+    }
+
+    function refreshFrameDelays() {
+      if (!gifState.frameCount) return;
+      const fps = getPlaybackFps();
+      const { delays, delayMs } = computeFrameDelays(fps);
+      gifState.frameDelays = delays;
+      updateGifStatusLine(delayMs);
+    }
+
+    function updateGifStatusLine(delayMs) {
+      const base = $("gif-status").dataset.base || "";
+      if (!base) return;
+      const fps = getPlaybackFps();
+      const mode = $("playback-mode").selectedOptions[0]?.textContent || "";
+      const timing = `${mode} · ${fps} fps（${delayMs} ms/帧）`;
+      const cached = gifState.cache.size;
+      const cacheHint = cached < gifState.frameCount ? ` · 缓存 ${cached}/${gifState.frameCount}` : "";
+      $("gif-status").textContent = `${base} · ${timing}${cacheHint}`;
+    }
+
+    function clearGifCache() {
+      for (const bm of gifState.cache.values()) bm.close();
+      gifState.cache.clear();
+    }
+
+    async function fetchFrameBitmap(index, token) {
+      if (gifState.cache.has(index)) return gifState.cache.get(index);
+      const r = await fetch(
+        `/api/gif/frame?file=${encodeURIComponent(gifState.relFile)}&index=${index}`
+      );
+      if (!r.ok) throw new Error(`帧 ${index + 1}: HTTP ${r.status}`);
+      const blob = await r.blob();
+      if (token !== gifState.loadToken) return null;
+      const bitmap = await createImageBitmap(blob);
+      gifState.cache.set(index, bitmap);
+      updateGifStatusLine(Math.max(8, Math.round(1000 / getPlaybackFps())));
+      return bitmap;
+    }
+
+    function stopPlay() {
+      gifState.playing = false;
+      if (gifState.playTimer) {
+        clearTimeout(gifState.playTimer);
+        gifState.playTimer = null;
+      }
+      $("frame-play").textContent = "▶ 播放";
+    }
+
+    async function drawFrame(i) {
+      if (i < 0 || i >= gifState.frameCount) return;
+      const token = gifState.loadToken;
+      try {
+        const bitmap = await fetchFrameBitmap(i, token);
+        if (!bitmap || token !== gifState.loadToken) return;
+        const canvas = $("gif-canvas");
+        const ctx = canvas.getContext("2d");
+        if (canvas.width !== gifState.width) {
+          canvas.width = gifState.width;
+          canvas.height = gifState.height;
+        }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0);
+        gifState.index = i;
+        $("frame-info").textContent = `${i + 1} / ${gifState.frameCount}`;
+        $("frame-slider").value = String(i);
+        updateFrameButtons();
+        requestAnimationFrame(centerViewerIfFit);
+      } catch (e) {
+        $("viewer-placeholder").hidden = false;
+        $("viewer-placeholder").textContent = `帧 ${i + 1} 加载失败: ${e.message}`;
+      }
+    }
+
+    function updateFrameButtons() {
+      const n = gifState.frameCount;
+      const i = gifState.index;
+      $("frame-prev").disabled = n === 0 || i <= 0;
+      $("frame-next").disabled = n === 0 || i >= n - 1;
+      $("frame-first").disabled = n === 0 || i <= 0;
+      $("frame-last").disabled = n === 0 || i >= n - 1;
+    }
+
+    function showFrame(delta) {
+      stopPlay();
+      const next = Math.max(0, Math.min(gifState.frameCount - 1, gifState.index + delta));
+      drawFrame(next);
+    }
+
+    function scheduleNextFrame() {
+      if (!gifState.playing) return;
+      const delay = gifState.frameDelays[gifState.index] || Math.max(8, Math.round(1000 / getPlaybackFps()));
+      gifState.playTimer = setTimeout(async () => {
+        if (!gifState.playing) return;
+        const next = gifState.index + 1;
+        if (next >= gifState.frameCount) {
+          stopPlay();
+          await drawFrame(0);
+          return;
+        }
+        await drawFrame(next);
+        scheduleNextFrame();
+      }, delay);
+    }
+
+    function togglePlay() {
+      if (!gifState.frameCount) return;
+      if (gifState.playing) {
+        stopPlay();
+        return;
+      }
+      gifState.playing = true;
+      $("frame-play").textContent = "⏸ 暂停";
+      scheduleNextFrame();
+    }
+
+    async function prefetchFrames(token) {
+      const batch = 6;
+      for (let start = 0; start < gifState.frameCount; start += batch) {
+        if (token !== gifState.loadToken) return;
+        const tasks = [];
+        for (let j = start; j < Math.min(start + batch, gifState.frameCount); j++) {
+          if (!gifState.cache.has(j)) {
+            tasks.push(fetchFrameBitmap(j, token).catch(() => null));
+          }
+        }
+        if (tasks.length) await Promise.all(tasks);
+      }
+      updateGifStatusLine(Math.max(8, Math.round(1000 / getPlaybackFps())));
+    }
+
+    async function loadGif(url) {
+      stopPlay();
+      gifState.loadToken += 1;
+      const token = gifState.loadToken;
+      clearGifCache();
+      gifState.frameCount = 0;
+      gifState.index = 0;
+      resetViewerZoom();
+      $("gif-status").textContent = "加载中…";
+      $("viewer-controls").hidden = true;
+      $("viewer-zoom-wrap").hidden = true;
+      $("viewer-placeholder").hidden = false;
+      $("viewer-placeholder").textContent = "加载 GIF…";
+
+      if (!url) {
+        $("gif-status").textContent = "";
+        $("viewer-placeholder").textContent = "请从上方下拉框选择 GIF";
+        return;
+      }
+
+      try {
+        const relFile = urlToRelFile(url);
+        const infoR = await fetch(`/api/gif/info?file=${encodeURIComponent(relFile)}`);
+        if (!infoR.ok) throw new Error(`info HTTP ${infoR.status}`);
+        const info = await infoR.json();
+        if (token !== gifState.loadToken) return;
+
+        gifState.relFile = relFile;
+        gifState.frameCount = info.frames;
+        gifState.width = info.width;
+        gifState.height = info.height;
+        $("viewer-placeholder").hidden = true;
+        $("viewer-zoom-wrap").hidden = false;
+        $("viewer-controls").hidden = false;
+        $("frame-slider").max = String(info.frames - 1);
+        $("frame-slider").value = "0";
+        $("gif-status").dataset.base = `${info.frames} 帧 · ${info.width}×${info.height} · ${url.split("/").pop()}`;
+        syncPlaybackFpsFromMode();
+        refreshFrameDelays();
+
+        await drawFrame(0);
+        prefetchFrames(token);
+        requestAnimationFrame(centerViewerIfFit);
+      } catch (e) {
+        $("gif-status").textContent = "加载失败";
+        $("viewer-placeholder").hidden = false;
+        $("viewer-placeholder").textContent = `无法加载 GIF: ${e.message}`;
+      }
+    }
+
+    function pathToUrl(absPath) {
+      if (!absPath) return "";
+      const norm = absPath.replace(/\\/g, "/");
+      const idx = norm.indexOf("/output/");
+      if (idx >= 0) return norm.slice(idx);
+      const m = norm.match(/output\/(.+)$/);
+      return m ? `/output/${m[1]}` : "";
+    }
+
+    function populateGifSelect(items, selectedUrl) {
+      const sel = $("gif-select");
+      const current = selectedUrl || sel.value;
+      sel.innerHTML = '<option value="">— 选择 GIF —</option>';
+      for (const item of items) {
+        const opt = document.createElement("option");
+        opt.value = item.url;
+        opt.textContent = item.name;
+        opt.dataset.path = item.path || "";
+        sel.appendChild(opt);
+      }
+      if (current && [...sel.options].some((o) => o.value === current)) {
+        sel.value = current;
+      }
+    }
+
+    function buildGifCatalog(metaGifs, jobResult) {
+      const map = new Map();
+      for (const g of metaGifs || []) {
+        map.set(g.url, { name: g.name, url: g.url, path: g.path });
+      }
+      if (jobResult && jobResult.scenarios) {
+        for (const s of jobResult.scenarios) {
+          if (s.viz_rc === 0 && s.gif) {
+            const url = pathToUrl(s.gif);
+            if (url) map.set(url, { name: s.scenario, url, path: s.gif });
+          }
+        }
+      }
+      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function renderLog(lines) {
+      renderLogPanel($("log-view"), $("log-meta"), lines);
+    }
+
+    /* ── Meta / Job ── */
+    let metaGifs = [];
 
     async function loadMeta() {
       const r = await fetch("/api/meta");
       const meta = await r.json();
+      metaGifs = meta.viz_gifs || [];
 
       const scenBox = $("scenario-list");
       scenBox.innerHTML = "";
       if (!meta.scenarios.length) {
-        scenBox.textContent = "scenarios/ 下无有效场景（需 scenario_meta + dynamic_objects + lane_graph）";
+        scenBox.textContent = "scenarios/ 下无有效场景";
       }
       meta.scenarios.forEach((s) => {
         const lab = document.createElement("label");
@@ -247,9 +886,8 @@
         cb.type = "checkbox";
         cb.value = s.name;
         cb.checked = true;
-        cb.dataset.id = s.scenario_id || "";
         lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(" " + s.name + (s.scenario_id ? ` (${s.scenario_id.slice(0,8)}…)` : "")));
+        lab.appendChild(document.createTextNode(" " + s.name));
         scenBox.appendChild(lab);
       });
 
@@ -272,6 +910,8 @@
       });
 
       const d = meta.defaults;
+      simDt = d.dt;
+      gifGenFps = d.gif_fps;
       $("planner").value = d.planner;
       $("reference-source").value = d.reference_source;
       $("reference-step").value = d.reference_step;
@@ -284,11 +924,14 @@
       $("gif-reference-step").value = d.reference_step;
       $("make-gif").checked = d.make_gif;
       $("run-grading").checked = d.run_grading;
+      syncPlaybackFpsFromMode();
 
       const p = meta.paths;
       $("path-hint").textContent =
         (p.grading_bin_exists ? "grading_main ✓" : "grading_main ✗ 需 bazel build") +
         " · " + p.sim_runner_hint;
+
+      populateGifSelect(buildGifCatalog(metaGifs));
     }
 
     function selectedScenarios() {
@@ -329,8 +972,9 @@
       $("run-btn").disabled = true;
       $("status").textContent = "提交中…";
       $("status").className = "badge run";
-      $("log").textContent = "";
+      renderLog([]);
       $("results").innerHTML = "";
+      stopPlay();
 
       const r = await fetch("/api/jobs", {
         method: "POST",
@@ -342,23 +986,41 @@
         alert(error || "启动失败");
         $("run-btn").disabled = false;
         $("status").textContent = "空闲";
+        $("status").className = "badge idle";
         return;
       }
       $("job-id").textContent = "job: " + job_id;
       pollJob(job_id);
     }
 
+    let lastJobResult = null;
+
     function renderResults(result) {
-      if (!result || !result.scenarios) return;
+      if (!result || !result.scenarios) {
+        $("results").innerHTML = "";
+        return;
+      }
       let html = "<table><tr><th>场景</th><th>sim</th><th>grading</th><th>gif</th></tr>";
       for (const s of result.scenarios) {
         const sim = s.sim_rc === 0 ? "OK" : "FAIL";
         const gr = s.passed === true ? "PASS" : s.passed === false ? "FAIL" : "-";
         const gif = s.viz_rc === 0 ? "OK" : s.viz_rc == null ? "-" : "FAIL";
-        html += `<tr><td>${s.scenario}</td><td>${sim}</td><td>${gr}</td><td>${gif}</td></tr>`;
+        const url = pathToUrl(s.gif);
+        const clickable = s.viz_rc === 0 && url ? ' class="clickable" data-gif-url="' + url + '"' : "";
+        html += `<tr${clickable}><td>${s.scenario}</td><td>${sim}</td><td>${gr}</td><td>${gif}</td></tr>`;
       }
-      html += "</table><p>总耗时 ${result.elapsed_s}s</p>";
+      html += `<tr><td colspan="4" style="color:var(--muted)">总耗时 ${result.elapsed_s}s · 点击有 GIF 的行可切换播包</td></tr>`;
       $("results").innerHTML = html;
+
+      $("results").querySelectorAll("tr.clickable").forEach((tr) => {
+        tr.onclick = () => {
+          const url = tr.dataset.gifUrl;
+          $("gif-select").value = url;
+          $("results").querySelectorAll("tr").forEach((r) => r.classList.remove("active"));
+          tr.classList.add("active");
+          loadGif(url);
+        };
+      });
     }
 
     function pollJob(jobId) {
@@ -366,8 +1028,7 @@
       pollTimer = setInterval(async () => {
         const r = await fetch("/api/jobs/" + jobId);
         const job = await r.json();
-        $("log").textContent = (job.log || []).join("\n");
-        $("log").scrollTop = $("log").scrollHeight;
+        renderLog(job.log || []);
 
         if (job.status === "running") {
           $("status").textContent = "运行中";
@@ -380,7 +1041,17 @@
         if (job.status === "done") {
           $("status").textContent = "完成";
           $("status").className = "badge ok";
+          lastJobResult = job.result;
           renderResults(job.result);
+          const catalog = buildGifCatalog(metaGifs, job.result);
+          populateGifSelect(catalog);
+          const firstGif = catalog.find((g) =>
+            job.result.scenarios.some((s) => s.viz_rc === 0 && pathToUrl(s.gif) === g.url)
+          );
+          if (firstGif) {
+            $("gif-select").value = firstGif.url;
+            loadGif(firstGif.url);
+          }
         } else {
           $("status").textContent = "错误";
           $("status").className = "badge fail";
@@ -388,9 +1059,61 @@
       }, 800);
     }
 
+    /* ── 事件绑定 ── */
     $("run-btn").onclick = startJob;
-    loadMeta().catch((e) => {
-      $("scenario-list").textContent = "无法加载 /api/meta: " + e;
+    $("gif-select").onchange = () => loadGif($("gif-select").value);
+    $("playback-mode").onchange = () => applyPlaybackSpeedChange();
+    $("playback-fps").onchange = () => {
+      if ($("playback-mode").value !== "custom") {
+        $("playback-mode").value = "custom";
+        syncPlaybackFpsFromMode();
+      }
+      applyPlaybackSpeedChange();
+    };
+    $("playback-fps").oninput = () => {
+      if ($("playback-mode").value !== "custom") return;
+      refreshFrameDelays();
+    };
+    $("dt").onchange = () => {
+      if ($("playback-mode").value === "sim") applyPlaybackSpeedChange();
+    };
+    $("gif-fps").onchange = () => {
+      gifGenFps = parseInt($("gif-fps").value, 10) || 120;
+      if ($("playback-mode").value === "gif") applyPlaybackSpeedChange();
+    };
+    $("frame-prev").onclick = () => showFrame(-1);
+    $("frame-next").onclick = () => showFrame(1);
+    $("frame-first").onclick = () => { stopPlay(); drawFrame(0); };
+    $("frame-last").onclick = () => { stopPlay(); drawFrame(gifState.frameCount - 1); };
+    $("frame-play").onclick = togglePlay;
+    $("frame-slider").oninput = (e) => {
+      stopPlay();
+      drawFrame(parseInt(e.target.value, 10));
+    };
+
+    $("viewer-stage").addEventListener("wheel", handleViewerWheel, { passive: false });
+    $("viewer-stage").addEventListener("mousedown", handleViewerMouseDown);
+    window.addEventListener("mousemove", handleViewerMouseMove);
+    window.addEventListener("mouseup", handleViewerMouseUp);
+
+    $("viewer").addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); showFrame(-1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); showFrame(1); }
+      if (e.key === " ") { e.preventDefault(); togglePlay(); }
+    });
+
+    async function boot() {
+      try {
+        const mod = await import("./log-highlighter.js");
+        renderLogPanel = mod.renderLogPanel;
+      } catch (e) {
+        console.warn("log-highlighter unavailable, using plain text:", e);
+      }
+      await loadMeta();
+    }
+
+    boot().catch((e) => {
+      $("scenario-list").textContent = "初始化失败: " + e;
     });
   </script>
 </body>

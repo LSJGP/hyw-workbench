@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import sys
@@ -12,8 +13,8 @@ import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 WEB_ROOT = Path(__file__).resolve().parent
 WORKBENCH_ROOT = WEB_ROOT.parent
@@ -40,6 +41,87 @@ JOBS_LOCK = threading.Lock()
 DEFAULT_PORT = 8765
 
 
+def _safe_output_file(rel: str) -> Optional[Path]:
+    """Resolve a path under OUTPUT_DIR; reject traversal."""
+    rel = rel.replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        return None
+    root = OUTPUT_DIR.resolve()
+    full = (OUTPUT_DIR / rel).resolve()
+    try:
+        full.relative_to(root)
+    except ValueError:
+        return None
+    return full if full.is_file() else None
+
+
+def _gif_info(rel: str) -> Optional[Dict[str, Any]]:
+    path = _safe_output_file(rel)
+    if not path or path.suffix.lower() != ".gif":
+        return None
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    im = Image.open(path)
+    durations: List[int] = []
+    count = 0
+    try:
+        while True:
+            raw = im.info.get("duration")
+            if raw is not None:
+                durations.append(int(raw))
+            count += 1
+            im.seek(count)
+    except EOFError:
+        pass
+    w, h = im.size
+    avg = round(sum(durations) / len(durations), 2) if durations else 0
+    return {
+        "file": rel,
+        "frames": count,
+        "width": w,
+        "height": h,
+        "durations_ms": durations,
+        "avg_duration_ms": avg,
+    }
+
+
+def _gif_frame_png(rel: str, index: int) -> Optional[bytes]:
+    path = _safe_output_file(rel)
+    if not path or path.suffix.lower() != ".gif":
+        return None
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    im = Image.open(path)
+    try:
+        im.seek(index)
+    except EOFError:
+        return None
+    buf = io.BytesIO()
+    im.convert("RGBA").save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _list_viz_gifs() -> list[dict[str, str]]:
+    viz_dir = OUTPUT_DIR / "viz"
+    if not viz_dir.is_dir():
+        return []
+    items: list[dict[str, str]] = []
+    for p in sorted(viz_dir.glob("*_sim.gif")):
+        name = p.stem.replace("_sim", "")
+        items.append(
+            {
+                "name": name,
+                "path": str(p),
+                "url": f"/output/viz/{p.name}",
+            }
+        )
+    return items
+
+
 def _job_log_append(job_id: str, line: str) -> None:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -48,6 +130,21 @@ def _job_log_append(job_id: str, line: str) -> None:
         job["log"].append(line)
         if len(job["log"]) > 8000:
             job["log"] = job["log"][-6000:]
+
+
+def _serve_web_static(rel: str) -> Optional[Path]:
+    rel = rel.replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        return None
+    root = WEB_ROOT.resolve()
+    full = (WEB_ROOT / rel).resolve()
+    try:
+        full.relative_to(root)
+    except ValueError:
+        return None
+    if full.suffix not in (".js", ".css", ".map"):
+        return None
+    return full if full.is_file() else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -81,6 +178,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             return self._serve_file(WEB_ROOT / "index.html")
+        static = _serve_web_static(path.lstrip("/"))
+        if static:
+            return self._serve_file(static)
         if path.startswith("/api/jobs/"):
             job_id = path.split("/")[-1]
             with JOBS_LOCK:
@@ -88,6 +188,33 @@ class Handler(BaseHTTPRequestHandler):
             if not job:
                 return self._send_json(404, {"error": "job not found"})
             return self._send_json(200, job)
+        if path == "/api/viz":
+            return self._send_json(200, {"gifs": _list_viz_gifs()})
+        if path == "/api/gif/info":
+            qs = parse_qs(urlparse(self.path).query)
+            rel = (qs.get("file") or [""])[0].strip()
+            info = _gif_info(rel)
+            if not info:
+                return self._send_json(404, {"error": "gif not found"})
+            return self._send_json(200, info)
+        if path == "/api/gif/frame":
+            qs = parse_qs(urlparse(self.path).query)
+            rel = (qs.get("file") or [""])[0].strip()
+            try:
+                index = int((qs.get("index") or ["0"])[0])
+            except ValueError:
+                return self._send_json(400, {"error": "invalid index"})
+            png = _gif_frame_png(rel, index)
+            if png is None:
+                return self._send_json(404, {"error": "frame not found"})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(png)
+            return
         if path == "/api/meta":
             grading_bin = Path(DEFAULT_GRADING_BIN)
             return self._send_json(
@@ -99,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
                     "log_levels": LOG_LEVELS,
                     "cpp_modes": CPP_MODES,
                     "reference_sources": REFERENCE_SOURCES,
+                    "viz_gifs": _list_viz_gifs(),
                     "defaults": {
                         "planner": "local_dwa",
                         "metrics": list(METRIC_CATALOG.keys()),
@@ -112,6 +240,7 @@ class Handler(BaseHTTPRequestHandler):
                         "gif_dpi": 100,
                         "make_gif": True,
                         "run_grading": True,
+                        "sim_playback_fps": 10,
                     },
                     "paths": {
                         "workbench_root": str(WORKBENCH_ROOT),
@@ -121,6 +250,12 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 },
             )
+        if path.startswith("/output/"):
+            rel = path[len("/output/") :]
+            file_path = _safe_output_file(rel)
+            if file_path:
+                return self._serve_file(file_path)
+            return self._send_json(404, {"error": "file not found"})
         return self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:

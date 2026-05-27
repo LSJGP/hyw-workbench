@@ -211,6 +211,33 @@ def load_sim_log(path: Path) -> List[dict]:
     return doc.get("frames", [])
 
 
+def _fix_gif_frame_duration(path: Path, fps: int) -> None:
+    """PillowWriter at high fps often writes duration=0; patch per-frame timing."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    # GIF/PIL 最小约 10ms；120fps 目标 8.3ms 无法写入，取 10ms ≈ 100fps。
+    duration_ms = max(10, int(round(1000 / max(1, fps))))
+    im = Image.open(path)
+    frames = []
+    try:
+        while True:
+            frames.append(im.copy())
+            im.seek(im.tell() + 1)
+    except EOFError:
+        pass
+    if not frames:
+        return
+    frames[0].save(
+        path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=[duration_ms] * len(frames),
+        loop=0,
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="2D sim visualization (full map + OBBs)")
     p.add_argument("--scenario-dir", required=True, type=Path)
@@ -434,6 +461,7 @@ def main() -> int:
 
         ani = FuncAnimation(fig, anim_fn, frames=len(frames), interval=1000 // max(1, args.fps))
         ani.save(str(out), writer=PillowWriter(fps=args.fps), dpi=args.dpi)
+        _fix_gif_frame_duration(out, args.fps)
         print(f"[viz] wrote {out}")
         plt.close(fig)
         return 0
