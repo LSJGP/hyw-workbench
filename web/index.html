@@ -929,6 +929,7 @@
       const p = meta.paths;
       $("path-hint").textContent =
         (p.grading_bin_exists ? "grading_main ✓" : "grading_main ✗ 需 bazel build") +
+        " · " + (p.planner_bin_exists ? "planner_server ✓" : "planner_server ✗ 需 bazel build") +
         " · " + p.sim_runner_hint;
 
       populateGifSelect(buildGifCatalog(metaGifs));

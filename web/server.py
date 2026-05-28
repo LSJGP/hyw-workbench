@@ -26,6 +26,7 @@ from hyw_paths import OUTPUT_DIR, WORKBENCH_ROOT  # noqa: E402
 from batch_run_scenarios import (  # noqa: E402
     CPP_MODES,
     DEFAULT_GRADING_BIN,
+    DEFAULT_PLANNER_HINT,
     DEFAULT_SIM_RUNNER_HINT,
     LOG_LEVELS,
     METRIC_CATALOG,
@@ -35,6 +36,7 @@ from batch_run_scenarios import (  # noqa: E402
     list_scenarios,
     run_batch,
 )
+from hyw_paths import DEFAULT_PLANNER_BIN  # noqa: E402
 
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -217,6 +219,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/meta":
             grading_bin = Path(DEFAULT_GRADING_BIN)
+            planner_bin = Path(DEFAULT_PLANNER_BIN)
             return self._send_json(
                 200,
                 {
@@ -229,6 +232,7 @@ class Handler(BaseHTTPRequestHandler):
                     "viz_gifs": _list_viz_gifs(),
                     "defaults": {
                         "planner": "local_dwa",
+                        "planner_address": "localhost:50051",
                         "metrics": list(METRIC_CATALOG.keys()),
                         "dt": 0.1,
                         "desired_speed": 13.9,
@@ -246,7 +250,10 @@ class Handler(BaseHTTPRequestHandler):
                         "workbench_root": str(WORKBENCH_ROOT),
                         "grading_bin": str(grading_bin),
                         "grading_bin_exists": grading_bin.is_file(),
+                        "planner_bin": str(planner_bin),
+                        "planner_bin_exists": planner_bin.is_file(),
                         "sim_runner_hint": DEFAULT_SIM_RUNNER_HINT,
+                        "planner_hint": DEFAULT_PLANNER_HINT,
                     },
                 },
             )
@@ -293,6 +300,9 @@ class Handler(BaseHTTPRequestHandler):
             output_log_dir=body.get("output_log_dir", ""),
             output_report_dir=body.get("output_report_dir", ""),
             output_viz_dir=body.get("output_viz_dir", ""),
+            planner_address=body.get("planner_address", "localhost:50051"),
+            planner_bin=body.get("planner_bin", ""),
+            planner_port=int(body.get("planner_port", 50051)),
         )
 
         with JOBS_LOCK:

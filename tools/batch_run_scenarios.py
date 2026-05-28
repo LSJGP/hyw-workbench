@@ -20,6 +20,8 @@ sys.path.insert(0, str(WORKBENCH_ROOT))
 from hyw_paths import (  # noqa: E402
     DEFAULT_GRADING_BIN,
     DEFAULT_METRICS,
+    DEFAULT_PLANNER_ADDRESS,
+    DEFAULT_PLANNER_BIN,
     HYW_SIM,
     OUTPUT_DIR,
     RUN_SIM,
@@ -31,6 +33,10 @@ from hyw_paths import (  # noqa: E402
 DEFAULT_SIM_RUNNER_HINT = (
     "hyw-sim/bazel-bin/cpp/sim_runner "
     "(build: cd hyw-sim && bazel build //cpp:sim_runner)"
+)
+DEFAULT_PLANNER_HINT = (
+    "hyw-planner/bazel-bin/cpp/planner_server "
+    "(build: cd hyw-planner && bazel build //cpp:planner_server)"
 )
 
 PLANNERS = ["local_dwa", "reference_tracker", "goal_seek"]
@@ -81,6 +87,9 @@ class BatchConfig:
     output_log_dir: str = ""
     output_report_dir: str = ""
     output_viz_dir: str = ""
+    planner_address: str = DEFAULT_PLANNER_ADDRESS
+    planner_bin: str = ""
+    planner_port: int = 50051
 
 
 def list_scenarios() -> List[Dict[str, Any]]:
@@ -215,6 +224,14 @@ def run_one_scenario(
         "--log-level",
         cfg.log_level,
     ]
+    planner_bin = (cfg.planner_bin or "").strip()
+    if not planner_bin and DEFAULT_PLANNER_BIN.is_file():
+        planner_bin = str(DEFAULT_PLANNER_BIN)
+    if planner_bin:
+        sim_cmd.extend(["--planner-bin", str(Path(planner_bin).expanduser().resolve())])
+        sim_cmd.extend(["--planner-port", str(cfg.planner_port)])
+    else:
+        sim_cmd.extend(["--planner-address", cfg.planner_address])
     if cfg.log_dir:
         sim_cmd.extend(["--log-dir", str(Path(cfg.log_dir).expanduser().resolve())])
     elif cfg.log_level not in ("info", "off"):

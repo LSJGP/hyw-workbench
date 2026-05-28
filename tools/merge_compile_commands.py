@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge hyw-sim/ and hyw-grading/ compile_commands.json for IDE at workbench root."""
+"""Merge sub-repo compile_commands.json for IDE at workbench root."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,16 @@ from pathlib import Path
 
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
 HYW_ROOT = WORKBENCH_ROOT.parent
+
+_SOURCE_ROOTS = tuple(
+    (HYW_ROOT / sub / subpath).resolve()
+    for sub, subpath in (
+        ("hyw-sim", "cpp"),
+        ("hyw-planner", "cpp"),
+        ("hyw-grading", "src"),
+    )
+)
+_SOURCE_SUFFIXES = {".cc", ".cpp", ".c", ".h", ".hpp", ".hh"}
 
 
 def _load(path: Path) -> list:
@@ -33,14 +43,40 @@ def _prefix_entries(entries: list, prefix: str) -> list:
     return out
 
 
+def _is_first_party_source(file_path: str) -> bool:
+    try:
+        path = Path(file_path).resolve()
+    except OSError:
+        return False
+    if path.suffix not in _SOURCE_SUFFIXES:
+        return False
+    for root in _SOURCE_ROOTS:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _filter_first_party(entries: list) -> list:
+    return [e for e in entries if _is_first_party_source(e.get("file", ""))]
+
+
 def main() -> int:
     merged: list = []
-    for sub, prefix in (("hyw-sim", "hyw-sim"), ("hyw-grading", "hyw-grading")):
+    for sub, prefix in (
+        ("hyw-sim", "hyw-sim"),
+        ("hyw-planner", "hyw-planner"),
+        ("hyw-grading", "hyw-grading"),
+    ):
         cc = HYW_ROOT / sub / "compile_commands.json"
         entries = _load(cc)
         if entries:
-            print(f"[merge] {sub}: {len(entries)} entries")
-            merged.extend(_prefix_entries(entries, prefix))
+            prefixed = _prefix_entries(entries, prefix)
+            kept = _filter_first_party(prefixed)
+            print(f"[merge] {sub}: {len(entries)} raw -> {len(kept)} first-party")
+            merged.extend(kept)
         else:
             print(f"[merge] skip missing/empty: {cc}", file=sys.stderr)
 
