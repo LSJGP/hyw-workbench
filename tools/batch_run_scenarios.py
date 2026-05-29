@@ -55,6 +55,9 @@ METRIC_CATALOG: Dict[str, Dict[str, Any]] = {
     "drivable_area_checker": {
         "paramsJson": '{"minClearanceM": 0.35, "checkCenterOnly": false}',
     },
+    "solid_line_crossing_checker": {
+        "paramsJson": '{"minClearanceM": 0.25}',
+    },
 }
 
 
