@@ -6,6 +6,7 @@ Called by ``web/server.py`` or CLI. Uses ``sim/run_sim.py`` and ``tools/viz_sim.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import shlex
 import subprocess
@@ -288,25 +289,56 @@ def run_one_scenario(
             result["passed"] = None
 
     if cfg.make_gif and result["sim_rc"] == 0 and sim_log.is_file():
-        _log(log, f"\n=== [{scenario_name}] visualization ===")
-        viz_cmd = [
-            sys.executable,
-            str(VIZ_SIM),
-            "--scenario-dir",
-            str(scenario_dir),
-            "--sim-log",
-            str(sim_log),
-            "--animate",
-            "--fps",
-            str(cfg.gif_fps),
-            "--dpi",
-            str(cfg.gif_dpi),
-            "--reference-step",
-            str(cfg.gif_reference_step),
-            "--output",
-            str(gif_path),
-        ]
-        result["viz_rc"] = _run(viz_cmd, WORKBENCH_ROOT, log)
+        has_viz_json_inputs = (
+            (scenario_dir / "scenario_meta.json").is_file()
+            and (scenario_dir / "dynamic_objects.json").is_file()
+            and (scenario_dir / "lane_graph.json").is_file()
+        )
+        has_viz_pb_inputs = (
+            (scenario_dir / "scenario_meta.pb").is_file()
+            and (scenario_dir / "dynamic_objects.pb").is_file()
+            and (scenario_dir / "lane_graph.pb").is_file()
+        )
+        try:
+            has_protobuf_runtime = importlib.util.find_spec("google.protobuf") is not None
+        except ModuleNotFoundError:
+            has_protobuf_runtime = False
+        if not (has_viz_json_inputs or has_viz_pb_inputs):
+            _log(
+                log,
+                f"[viz] skip {scenario_name}: missing scenario files "
+                "(need json trio or pb trio).",
+            )
+            result["gif"] = None
+        elif has_viz_pb_inputs and not has_viz_json_inputs and not has_protobuf_runtime:
+            _log(
+                log,
+                f"[viz] skip {scenario_name}: protobuf runtime not installed "
+                "(pip install protobuf) for pb-only visualization.",
+            )
+            result["gif"] = None
+        else:
+            _log(log, f"\n=== [{scenario_name}] visualization ===")
+            viz_cmd = [
+                sys.executable,
+                str(VIZ_SIM),
+                "--scenario-dir",
+                str(scenario_dir),
+                "--sim-log",
+                str(sim_log),
+                "--input-format",
+                cfg.input_format,
+                "--animate",
+                "--fps",
+                str(cfg.gif_fps),
+                "--dpi",
+                str(cfg.gif_dpi),
+                "--reference-step",
+                str(cfg.gif_reference_step),
+                "--output",
+                str(gif_path),
+            ]
+            result["viz_rc"] = _run(viz_cmd, WORKBENCH_ROOT, log)
 
     return result
 

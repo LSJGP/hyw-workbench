@@ -33,6 +33,12 @@ class LaneGraph:
 
     @classmethod
     def load(cls, path: Path) -> "LaneGraph":
+        if str(path).endswith(".pb"):
+            return cls._load_proto(path)
+        return cls._load_json(path)
+
+    @classmethod
+    def _load_json(cls, path: Path) -> "LaneGraph":
         with open(path) as f:
             doc = json.load(f)
         lanes_raw = doc.get("lanes", [])
@@ -50,6 +56,27 @@ class LaneGraph:
                     centerline=cl,
                     entry_lanes=[int(x) for x in l.get("entry_lanes", [])],
                     exit_lanes=[int(x) for x in l.get("exit_lanes", [])],
+                )
+            )
+        return cls(lanes)
+
+    @classmethod
+    def _load_proto(cls, path: Path) -> "LaneGraph":
+        from proto.sim import map_pb2  # type: ignore
+
+        m = map_pb2.StaticMap()
+        m.ParseFromString(path.read_bytes())
+        lanes: List[Lane] = []
+        for l in m.lanes:
+            cl = [(float(p.x), float(p.y), float(p.z)) for p in l.centerline]
+            lanes.append(
+                Lane(
+                    id=int(l.id),
+                    type=str(l.type),
+                    speed_limit_kmh=float(l.speed_limit_kmh),
+                    centerline=cl,
+                    entry_lanes=[int(x) for x in l.entry_lanes],
+                    exit_lanes=[int(x) for x in l.exit_lanes],
                 )
             )
         return cls(lanes)

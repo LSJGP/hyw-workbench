@@ -34,6 +34,7 @@ data/*.tfrecord
 data/*.tfrecord.*
 data/**/*.tfrecord
 data/**/*.tfrecord.*
+data/
 
 # --- 工具链生成（Bazel / clangd 合并产物）---
 compile_commands.json

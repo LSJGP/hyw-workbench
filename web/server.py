@@ -320,7 +320,6 @@ class Handler(BaseHTTPRequestHandler):
             output_viz_dir=body.get("output_viz_dir", ""),
             planner_address=body.get("planner_address", "localhost:50051"),
             planner_bin=body.get("planner_bin", ""),
-            planner_port=int(body.get("planner_port", 50051)),
         )
 
         with JOBS_LOCK:

@@ -23,6 +23,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKBENCH_ROOT))
 sys.path.insert(0, str(WORKBENCH_ROOT / "pysim"))
+GEN_DIR = WORKBENCH_ROOT / "tools" / "gen"
+if str(GEN_DIR) not in sys.path:
+    sys.path.insert(0, str(GEN_DIR))
 from hyw_paths import OUTPUT_DIR, WORKBENCH_ROOT  # noqa: E402,F401
 
 from waymo_sim.geometry import OBB  # noqa: E402
@@ -58,6 +61,42 @@ def _wrap_pi(a: float) -> float:
 
 
 def load_static_map(path: Path) -> StaticMapDraw:
+    if str(path).endswith(".pb"):
+        from proto.sim import map_pb2  # type: ignore
+
+        sm = map_pb2.StaticMap()
+        sm.ParseFromString(path.read_bytes())
+        return StaticMapDraw(
+            lanes=[
+                {
+                    "id": int(l.id),
+                    "centerline": [[float(p.x), float(p.y), float(p.z)] for p in l.centerline],
+                }
+                for l in sm.lanes
+            ],
+            road_lines=[
+                {
+                    "id": int(r.id),
+                    "polyline": [[float(p.x), float(p.y), float(p.z)] for p in r.polyline],
+                }
+                for r in sm.road_lines
+            ],
+            road_edges=[
+                {
+                    "id": int(r.id),
+                    "polyline": [[float(p.x), float(p.y), float(p.z)] for p in r.polyline],
+                }
+                for r in sm.road_edges
+            ],
+            crosswalks=[
+                {
+                    "id": int(c.id),
+                    "polygon": [[float(p.x), float(p.y), float(p.z)] for p in c.polygon],
+                }
+                for c in sm.crosswalks
+            ],
+        )
+
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     return StaticMapDraw(
@@ -254,6 +293,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--show-sdc-track", action="store_true")
     p.add_argument("--no-reference", action="store_true")
     p.add_argument("--dpi", type=int, default=100)
+    p.add_argument(
+        "--input-format",
+        choices=("auto", "json", "proto"),
+        default="auto",
+        help="scenario_meta/lane_graph/dynamic_objects read format",
+    )
     return p.parse_args()
 
 
@@ -417,7 +462,7 @@ def main() -> int:
         print(f"sim log not found: {sim_log}", file=sys.stderr)
         return 2
 
-    scenario = load_scenario(scenario_dir)
+    scenario = load_scenario(scenario_dir, input_format=args.input_format)
     static_map = load_static_map(scenario.lane_graph_path)
     lane_graph = LaneGraph.load(scenario.lane_graph_path)
     route_pts, route_ids = build_map_route(scenario, lane_graph, args.reference_step)
