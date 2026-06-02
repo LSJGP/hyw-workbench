@@ -339,9 +339,20 @@
       </section>
 
       <section>
-        <h2>Planner</h2>
+        <h2>Planner (gRPC)</h2>
+        <p id="planner-server-hint" class="hint" style="margin:0 0 0.5rem;font-size:0.72rem;color:var(--muted)">planner_server …</p>
         <label for="planner">规划器</label>
         <select id="planner"></select>
+        <div class="row2">
+          <div>
+            <label for="planner-host">planner host</label>
+            <input type="text" id="planner-host" value="127.0.0.1" />
+          </div>
+          <div>
+            <label for="planner-port">planner port</label>
+            <input type="number" id="planner-port" min="1" max="65535" value="50051" />
+          </div>
+        </div>
         <div class="row2">
           <div>
             <label for="reference-source">参考线</label>
@@ -905,7 +916,12 @@
         cb.value = m.name;
         cb.checked = meta.defaults.metrics.includes(m.name);
         lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(" " + m.name));
+        let label = " " + m.name;
+        if (m.runnable === false) {
+          label += " (需配置 grading_main)";
+          lab.style.color = "var(--muted)";
+        }
+        lab.appendChild(document.createTextNode(label));
         mbox.appendChild(lab);
       });
 
@@ -913,6 +929,14 @@
       simDt = d.dt;
       gifGenFps = d.gif_fps;
       $("planner").value = d.planner;
+      if (d.planner_host) $("planner-host").value = d.planner_host;
+      if (d.planner_port) $("planner-port").value = d.planner_port;
+      const ps = meta.planner_server || {};
+      const psLine =
+        (ps.running ? "planner_server ✓ " : "planner_server ✗ ") +
+        (ps.address || "127.0.0.1:50051") +
+        (ps.managed_by_workbench ? " (本页拉起)" : ps.running ? " (外部)" : "");
+      $("planner-server-hint").textContent = psLine;
       $("reference-source").value = d.reference_source;
       $("reference-step").value = d.reference_step;
       $("desired-speed").value = d.desired_speed;
@@ -954,6 +978,8 @@
       const body = {
         scenarios,
         planner: $("planner").value,
+        planner_host: $("planner-host").value.trim() || "127.0.0.1",
+        planner_port: parseInt($("planner-port").value, 10) || 50051,
         metrics: selectedMetrics(),
         reference_source: $("reference-source").value,
         reference_step: parseFloat($("reference-step").value),

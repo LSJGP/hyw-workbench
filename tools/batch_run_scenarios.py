@@ -29,51 +29,50 @@ from hyw_paths import (  # noqa: E402
     VIZ_SIM,
     WORKBENCH_ROOT,
 )
+from metric_discovery import (  # noqa: E402
+    default_metric_names,
+    discover_metric_catalog,
+)
+from planner_server_manager import (  # noqa: E402
+    DEFAULT_PLANNER_HOST,
+    DEFAULT_PLANNER_PORT,
+    ensure_planner_server,
+    planner_server_status,
+)
 
 DEFAULT_SIM_RUNNER_HINT = (
-    "hyw-sim/bazel-bin/cpp/sim_runner "
-    "(build: cd hyw-sim && bazel build //cpp:sim_runner)"
+    "hyw-sim sim_runner + hyw-planner gRPC "
+    "(build: hyw-sim //cpp:sim_runner, hyw-planner //cpp:planner_server)"
 )
 DEFAULT_PLANNER_HINT = (
     "hyw-planner/bazel-bin/cpp/planner_server "
     "(build: cd hyw-planner && bazel build //cpp:planner_server)"
 )
 
+# Ensure proto python stubs are importable (for scenario_meta.pb parsing).
+GEN_DIR = WORKBENCH_ROOT / "tools" / "gen"
+if str(GEN_DIR) not in sys.path:
+    sys.path.insert(0, str(GEN_DIR))
+
 PLANNERS = ["local_dwa", "reference_tracker", "goal_seek"]
 LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "off"]
 CPP_MODES = ["online", "offline", "both", "off"]
 REFERENCE_SOURCES = ["map", "sdc"]
 
-# Keys must match REGISTER_METRIC(..., "name") in grading_mini.
-METRIC_CATALOG: Dict[str, Dict[str, Any]] = {
-    "planning_limit_checker": {
-        "paramsJson": '{"maxDesiredSpeedMps": 33.3}',
-    },
-    "speed_checker": {
-        "paramsJson": '{"maxSpeedThreshold": 33.3}',
-    },
-    "regulatory_collision_checker": {
-        "paramsJson": None,
-    },
-    "lane_departure_checker": {
-        "paramsJson": '{"minRoadEdgeClearanceM": 0.35, "minLaneBoundaryClearanceM": 0.0}',
-    },
-    "drivable_area_checker": {
-        "paramsJson": '{"minClearanceM": 0.35, "checkCenterOnly": false}',
-    },
-}
-
-
 @dataclass
 class BatchConfig:
     scenario_names: List[str]
     planner: str = "local_dwa"
-    metrics: List[str] = field(default_factory=lambda: list(METRIC_CATALOG.keys()))
+    planner_host: str = DEFAULT_PLANNER_HOST
+    planner_port: int = DEFAULT_PLANNER_PORT
+    metrics: List[str] = field(default_factory=default_metric_names)
     reference_source: str = "map"
     reference_step: float = 1.0
     dt: float = 0.1
     max_seconds: float = 0.0
     desired_speed: float = 13.9
+    input_format: str = "auto"  # auto/json/proto
+    scenario_load: str = "bulk"  # bulk/stream
     cpp_mode: str = "both"
     run_grading: bool = True
     grading_bin: str = ""
@@ -89,7 +88,6 @@ class BatchConfig:
     output_viz_dir: str = ""
     planner_address: str = DEFAULT_PLANNER_ADDRESS
     planner_bin: str = ""
-    planner_port: int = 50051
 
 
 def list_scenarios() -> List[Dict[str, Any]]:
@@ -99,18 +97,35 @@ def list_scenarios() -> List[Dict[str, Any]]:
     for d in sorted(SCENARIOS_DIR.iterdir()):
         if not d.is_dir():
             continue
-        meta = d / "scenario_meta.json"
-        dyn = d / "dynamic_objects.json"
-        lg = d / "lane_graph.json"
-        if not (meta.is_file() and dyn.is_file() and lg.is_file()):
+        meta_json = d / "scenario_meta.json"
+        dyn_json = d / "dynamic_objects.json"
+        lg_json = d / "lane_graph.json"
+        meta_pb = d / "scenario_meta.pb"
+        dyn_pb = d / "dynamic_objects.pb"
+        lg_pb = d / "lane_graph.pb"
+
+        has_json = meta_json.is_file() and dyn_json.is_file() and lg_json.is_file()
+        has_pb = meta_pb.is_file() and dyn_pb.is_file() and lg_pb.is_file()
+        if not (has_json or has_pb):
             continue
         info: Dict[str, Any] = {"name": d.name, "path": str(d)}
         try:
-            with open(meta, encoding="utf-8") as f:
-                m = json.load(f)
-            info["scenario_id"] = m.get("scenario_id", "")
-            info["duration_s"] = m.get("duration_s")
+            if has_json:
+                with open(meta_json, encoding="utf-8") as f:
+                    m = json.load(f)
+                info["scenario_id"] = m.get("scenario_id", "")
+                info["duration_s"] = m.get("duration_s")
+            else:
+                from proto.sim import scenario_pb2  # type: ignore
+
+                meta = scenario_pb2.ScenarioMeta()
+                meta.ParseFromString(meta_pb.read_bytes())
+                info["scenario_id"] = meta.scenario_id
+                info["duration_s"] = float(meta.stats.duration_s)
         except OSError:
+            pass
+        except Exception:
+            # Keep listing even if pb parsing fails.
             pass
         out.append(info)
     return out
@@ -121,12 +136,11 @@ def build_metrics_config(
     spdlog_level: str = "info",
     simple_planner_max_speed: float = 33.3,
 ) -> Dict[str, Any]:
+    catalog = discover_metric_catalog()
     metrics: List[Dict[str, Any]] = []
     for name in metric_names:
-        if name not in METRIC_CATALOG:
-            continue
         entry: Dict[str, Any] = {"name": name}
-        pj = METRIC_CATALOG[name].get("paramsJson")
+        pj = catalog.get(name, {}).get("paramsJson")
         if pj:
             entry["paramsJson"] = pj
         metrics.append(entry)
@@ -203,6 +217,10 @@ def run_one_scenario(
         str(RUN_SIM),
         "--scenario-dir",
         str(scenario_dir),
+        "--scenario-load",
+        cfg.scenario_load,
+        "--input-format",
+        cfg.input_format,
         "--planner",
         cfg.planner,
         "--reference-source",
@@ -301,6 +319,8 @@ def run_batch(
     if not cfg.scenario_names:
         raise ValueError("no scenarios selected")
 
+    ensure_planner_server(host=cfg.planner_host, port=cfg.planner_port, log=log)
+
     mpath = metrics_config_path or (
         OUTPUT_DIR / "batch" / f"metrics_{int(time.time())}.json"
     )
@@ -332,7 +352,19 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scenarios", nargs="+", required=True, help="scenario folder names")
     p.add_argument("--planner", default="local_dwa", choices=PLANNERS)
-    p.add_argument("--metrics", nargs="*", default=list(METRIC_CATALOG.keys()))
+    p.add_argument("--metrics", nargs="*", default=None)
+    p.add_argument(
+        "--input-format",
+        default="auto",
+        choices=("auto", "json", "proto"),
+        help="scenario_meta/lane_graph/dynamic_objects read format",
+    )
+    p.add_argument(
+        "--scenario-load",
+        default="bulk",
+        choices=("bulk", "stream"),
+        help="dynamic_objects load mode",
+    )
     p.add_argument("--no-grading", action="store_true")
     p.add_argument("--no-gif", action="store_true")
     p.add_argument("--cpp-mode", default="both", choices=CPP_MODES)
@@ -343,12 +375,14 @@ def main() -> int:
     cfg = BatchConfig(
         scenario_names=args.scenarios,
         planner=args.planner,
-        metrics=list(args.metrics),
+        metrics=list(args.metrics) if args.metrics is not None else default_metric_names(),
         run_grading=not args.no_grading,
         make_gif=not args.no_gif,
         cpp_mode=args.cpp_mode,
         log_level=args.log_level,
         gif_fps=args.gif_fps,
+        input_format=args.input_format,
+        scenario_load=args.scenario_load,
     )
     summary = run_batch(cfg)
     print(json.dumps(summary, indent=2, ensure_ascii=False))

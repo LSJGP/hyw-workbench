@@ -29,7 +29,6 @@ from batch_run_scenarios import (  # noqa: E402
     DEFAULT_PLANNER_HINT,
     DEFAULT_SIM_RUNNER_HINT,
     LOG_LEVELS,
-    METRIC_CATALOG,
     PLANNERS,
     REFERENCE_SOURCES,
     BatchConfig,
@@ -37,6 +36,15 @@ from batch_run_scenarios import (  # noqa: E402
     run_batch,
 )
 from hyw_paths import DEFAULT_PLANNER_BIN  # noqa: E402
+from metric_discovery import (  # noqa: E402
+    default_metric_names,
+    discover_metric_meta,
+)
+from planner_server_manager import (  # noqa: E402
+    DEFAULT_PLANNER_HOST,
+    DEFAULT_PLANNER_PORT,
+    planner_server_status,
+)
 
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -224,16 +232,19 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "planners": PLANNERS,
-                    "metrics": [{"name": k} for k in METRIC_CATALOG],
+                    "metrics": discover_metric_meta(),
                     "scenarios": list_scenarios(),
                     "log_levels": LOG_LEVELS,
                     "cpp_modes": CPP_MODES,
                     "reference_sources": REFERENCE_SOURCES,
                     "viz_gifs": _list_viz_gifs(),
+                    "planner_server": planner_server_status(),
                     "defaults": {
                         "planner": "local_dwa",
                         "planner_address": "localhost:50051",
-                        "metrics": list(METRIC_CATALOG.keys()),
+                        "planner_host": DEFAULT_PLANNER_HOST,
+                        "planner_port": DEFAULT_PLANNER_PORT,
+                        "metrics": default_metric_names(),
                         "dt": 0.1,
                         "desired_speed": 13.9,
                         "reference_source": "map",
@@ -279,15 +290,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(400, {"error": "select at least one scenario"})
 
         job_id = uuid.uuid4().hex[:12]
+        planner_host = body.get("planner_host", DEFAULT_PLANNER_HOST)
+        planner_port = int(body.get("planner_port", DEFAULT_PLANNER_PORT))
+
         cfg = BatchConfig(
             scenario_names=list(scenarios),
             planner=body.get("planner", "local_dwa"),
-            metrics=body.get("metrics") or list(METRIC_CATALOG.keys()),
+            planner_host=planner_host,
+            planner_port=planner_port,
+            metrics=body.get("metrics") or default_metric_names(),
             reference_source=body.get("reference_source", "map"),
             reference_step=float(body.get("reference_step", 1.0)),
             dt=float(body.get("dt", 0.1)),
             max_seconds=float(body.get("max_seconds", 0.0)),
             desired_speed=float(body.get("desired_speed", 13.9)),
+            input_format=body.get("input_format", "auto"),
+            scenario_load=body.get("scenario_load", "bulk"),
             cpp_mode=body.get("cpp_mode", "both"),
             run_grading=bool(body.get("run_grading", True)),
             grading_bin=body.get("grading_bin", ""),
@@ -357,9 +375,18 @@ def main() -> None:
     args = p.parse_args()
 
     (OUTPUT_DIR / "batch").mkdir(parents=True, exist_ok=True)
+    try:
+        ensure_planner_server(host=DEFAULT_PLANNER_HOST, port=DEFAULT_PLANNER_PORT)
+    except Exception as e:
+        print(f"[web] warning: planner_server not started: {e}", file=sys.stderr)
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[web] http://{args.host}:{args.port}/")
     print(f"[web] workbench: {WORKBENCH_ROOT}")
+    ps = planner_server_status()
+    print(
+        f"[web] planner gRPC: {ps['address']} "
+        f"({'running' if ps['running'] else 'down'})"
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

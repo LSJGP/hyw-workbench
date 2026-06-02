@@ -6,7 +6,7 @@
 
 | 路径 | 说明 |
 |------|------|
-| `tools/` | `batch_run_scenarios.py`、`viz_sim.py`、Waymo 转换等 |
+| `tools/` | `batch_run_scenarios.py`、`metric_discovery.py`（自动扫描 metrics）、`viz_sim.py`、Waymo 转换等 |
 | `web/` | 本地 Dashboard |
 | `scenarios/` | 示例 JSON 场景 |
 | `pysim/` | `viz_sim` 使用的 `waymo_sim` 包 |
@@ -24,3 +24,7 @@ source hyw.env
 # 或 CLI
 python3 tools/batch_run_scenarios.py --scenarios waymo_scenario_5
 ```
+
+### Metrics 列表（Dashboard）
+
+控制台 `/api/meta` 通过 `tools/metric_discovery.py` 自动发现 grading 中 `REGISTER_METRIC` 注册的名称，并从 `hyw-grading/config/metrics_default.json` 读取默认 `paramsJson` 与默认勾选项。新增 metric 后刷新页面即可出现；批跑要能执行仍需在 `grading_main.cc` 的 `BuildMetricInitSpecs` 中登记。

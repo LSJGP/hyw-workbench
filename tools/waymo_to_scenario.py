@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Convert one Waymo Motion Scenario into the 3 JSONs the hywgrading sim eats.
+"""Convert one Waymo Motion Scenario into JSON/Proto scenes for hyw-sim.
 
 Outputs (under --out-dir):
-  scenario_meta.json     init / goal / world_offset / scenario_id / 统计信息
-  dynamic_objects.json   每个 track 的逐帧状态（车 / 人 / 自行车 / SDC）
-  lane_graph.json        静态地图全集（lanes / road_lines / road_edges /
-                                       crosswalks / stop_signs / driveways /
-                                       speed_bumps；坐标已减 world_offset）
+  scenario_meta.{json|pb}     init / goal / world_offset / scenario_id / 统计信息
+  dynamic_objects.{json|pb}  每个 track 的逐帧状态（车 / 人 / 自行车 / SDC）
+  lane_graph.{json|pb}       静态地图全集（lanes / road_lines / road_edges /
+                               crosswalks / stop_signs / driveways /
+                               speed_bumps；坐标已减 world_offset）
+
+Optional stream layout (for C++ --scenario-load stream):
+  dynamic_objects/header.{json|pb}
+  dynamic_objects/frames/*.{json|pb}
 
 By default the SDC's first valid pose is anchored at (0, 0, 0); all map
 features and all NPC tracks are translated by the same world_offset, so the
@@ -484,6 +488,21 @@ def main() -> int:
     p.add_argument("--scenario-index", type=int, default=0, help="shard 内第几个 scenario")
     p.add_argument("--out-dir", required=True, help="输出目录（3 个 JSON 都写到这里）")
     p.add_argument(
+        "--write-proto",
+        action="store_true",
+        help="额外写 scenario_meta.pb / dynamic_objects.pb / lane_graph.pb",
+    )
+    p.add_argument(
+        "--proto-only",
+        action="store_true",
+        help="仅写 .pb（跳过 JSON），适合 C++ sim_runner bulk/stream 直接读 proto",
+    )
+    p.add_argument(
+        "--split-dynamic-frames",
+        action="store_true",
+        help="写 stream layout：dynamic_objects/header(.pb) + frames/*.pb（用于 --scenario-load stream）",
+    )
+    p.add_argument(
         "--no-center", dest="center_on_sdc", action="store_false",
         help="保留 Waymo 原始全局坐标（默认是把 SDC 起点平移到原点）",
     )
@@ -541,9 +560,57 @@ def main() -> int:
     objs_path = out_dir / "dynamic_objects.json"
     graph_path = out_dir / "lane_graph.json"
 
-    write_meta(scene, meta_path, source=str(tf_path), scenario_index=args.scenario_index)
-    write_dynamic_objects(scene, objs_path, source=str(tf_path))
-    write_lane_graph(scene, graph_path, source=str(tf_path))
+    write_json = not args.proto_only
+    write_pb = bool(args.write_proto or args.proto_only)
+
+    meta_pb_path = out_dir / "scenario_meta.pb"
+    objs_pb_path = out_dir / "dynamic_objects.pb"
+    graph_pb_path = out_dir / "lane_graph.pb"
+
+    if write_json:
+        write_meta(scene, meta_path, source=str(tf_path), scenario_index=args.scenario_index)
+        write_dynamic_objects(scene, objs_path, source=str(tf_path))
+        write_lane_graph(scene, graph_path, source=str(tf_path))
+
+    if write_pb:
+        try:
+            from hyw_proto_convert import (
+                scene_to_dynamic_objects,
+                scene_to_scenario_meta,
+                scene_to_static_map,
+                write_message_pb,
+            )
+        except ImportError as e:
+            print(
+                "需要 protobuf stubs；请先运行：bash tools/gen_sim_protos.sh\n"
+                f"原始错误: {e}",
+                file=sys.stderr,
+            )
+            return 2
+
+        write_message_pb(
+            scene_to_scenario_meta(scene, source=str(tf_path), scenario_index=args.scenario_index),
+            meta_pb_path,
+        )
+        write_message_pb(
+            scene_to_dynamic_objects(scene, source=str(tf_path)),
+            objs_pb_path,
+        )
+        write_message_pb(
+            scene_to_static_map(scene, source=str(tf_path)),
+            graph_pb_path,
+        )
+
+    if args.split_dynamic_frames:
+        import split_existing_dynamic_objects
+
+        if write_json and write_pb:
+            split_fmt = "both"
+        elif write_pb:
+            split_fmt = "proto"
+        else:
+            split_fmt = "json"
+        split_existing_dynamic_objects.split_dynamic_objects(out_dir, fmt=split_fmt)
 
     mc = scene.map_feature_counts
     print(
@@ -552,15 +619,25 @@ def main() -> int:
         f"crosswalks={mc.get('crosswalks', 0)} stop_signs={mc.get('stop_signs', 0)} "
         f"driveways={mc.get('driveways', 0)} speed_bumps={mc.get('speed_bumps', 0)}"
     )
-    print(f"[converter] tracks: total={len(scene.tracks)} "
-          f"non_sdc_by_type={dict(scene.track_type_counts)} "
-          f"timestamps={len(scene.timestamps_seconds)}")
-    print(f"[converter] lane_graph.json: lanes exported={len(scene.static_map.get('lanes', []))}")
+    print(
+        f"[converter] tracks: total={len(scene.tracks)} "
+        f"non_sdc_by_type={dict(scene.track_type_counts)} "
+        f"timestamps={len(scene.timestamps_seconds)}"
+    )
+    print(
+        f"[converter] lane_graph: lanes exported={len(scene.static_map.get('lanes', []))}"
+    )
     print(f"[converter] init_pose = {scene.init_pose}")
     print(f"[converter] goal_pose = {scene.goal_pose}")
-    print(f"[converter] wrote {meta_path}")
-    print(f"[converter] wrote {objs_path}")
-    print(f"[converter] wrote {graph_path}")
+
+    if write_json:
+        print(f"[converter] wrote {meta_path}")
+        print(f"[converter] wrote {objs_path}")
+        print(f"[converter] wrote {graph_path}")
+    if write_pb:
+        print(f"[converter] wrote {meta_pb_path}")
+        print(f"[converter] wrote {objs_pb_path}")
+        print(f"[converter] wrote {graph_pb_path}")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,15 @@ if [[ ! -x "${SIM_RUNNER}" ]]; then
   echo "[dashboard]   cd ${HYW_ROOT}/hyw-sim && bazel build //cpp:sim_runner"
 fi
 
+echo "[dashboard] ensuring planner_server (gRPC) …"
+python3 -c "
+import sys
+sys.path.insert(0, '${WORKBENCH_ROOT}/tools')
+sys.path.insert(0, '${WORKBENCH_ROOT}')
+from planner_server_manager import ensure_planner_server
+ensure_planner_server()
+" || echo "[dashboard] warning: planner_server failed to start (sim jobs will retry)"
+
 echo "[dashboard] hyw root: ${HYW_ROOT}"
 echo "[dashboard] workbench: ${WORKBENCH_ROOT}"
 echo "[dashboard] url:  http://${HOST}:${PORT}/"
