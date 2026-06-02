@@ -44,6 +44,7 @@ class FrameRecord:
     command: PlanCommand
     collision: CollisionInfo
     num_npcs: int
+    npcs: List[NPCSnapshot] = field(default_factory=list)
 
 
 @dataclass
@@ -95,6 +96,7 @@ class World:
                 command=cmd,
                 collision=collision,
                 num_npcs=len(npcs),
+                npcs=list(npcs),
             )
             records.append(rec)
             for h in hooks:

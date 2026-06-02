@@ -49,6 +49,9 @@ METRIC_CATALOG: Dict[str, Dict[str, Any]] = {
     "regulatory_collision_checker": {
         "paramsJson": None,
     },
+    "collision_risk_checker": {
+        "paramsJson": None,
+    },
     "lane_departure_checker": {
         "paramsJson": '{"minRoadEdgeClearanceM": 0.35, "minLaneBoundaryClearanceM": 0.0}',
     },

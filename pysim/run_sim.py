@@ -28,10 +28,12 @@ from typing import Optional
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
+HYW_ROOT = REPO_ROOT.parent
 DEFAULT_LOG_DIR = REPO_ROOT / "output" / "log"
 DEFAULT_REPORT_DIR = REPO_ROOT / "output" / "report"
 DEFAULT_SIMLOG_PATH = DEFAULT_LOG_DIR / "sim_log.json"
 DEFAULT_GRADING_REPORT_PATH = DEFAULT_REPORT_DIR / "grading_report.json"
+DEFAULT_METRICS_CONFIG = HYW_ROOT / "hyw-grading" / "config" / "metrics_default.json"
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
@@ -96,7 +98,11 @@ def _parse_args(argv) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--no-python-grader",
+        "--metrics-config",
+        default="",
+        help="Path to grading metrics JSON (default: hyw-grading/config/metrics_default.json when using --grading-bin)",
+    )
+    p.add_argument(
         action="store_true",
         help=(
             "Do not run the in-process Python OnlineGrader. "
@@ -204,17 +210,30 @@ def main(argv=None) -> int:
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    writer = SimLogWriter(output_path=output_path, source=args.source_tag)
+    writer = SimLogWriter(
+        output_path=output_path,
+        source=args.source_tag,
+        ego_length_m=args.ego_length,
+        ego_width_m=args.ego_width,
+        ego_wheelbase_m=args.ego_wheelbase,
+        ego_rear_overhang_m=args.ego_rear_overhang,
+    )
     grader: Optional[OnlineGrader] = None
     hooks = []
     if not args.no_python_grader:
         grader = OnlineGrader(
             max_speed_mps=args.ego_max_speed,
             max_desired_speed_mps=args.ego_max_speed,
+            ego_length_m=args.ego_length,
+            ego_width_m=args.ego_width,
             print_every=args.print_every,
         )
         hooks.append(grader)
     hooks.append(writer)
+
+    metrics_config = (args.metrics_config or "").strip()
+    if not metrics_config and args.grading_bin and DEFAULT_METRICS_CONFIG.is_file():
+        metrics_config = str(DEFAULT_METRICS_CONFIG)
 
     if args.no_python_grader and not args.grading_bin:
         print(
@@ -236,7 +255,15 @@ def main(argv=None) -> int:
         report_path.parent.mkdir(parents=True, exist_ok=True)
         if args.cpp_mode in ("online", "both"):
             print(f"[sim] starting C++ scorer in stream mode: {bin_path} -> {report_path}")
-            cpp_online = CppOnlineGrader(binary_path=bin_path, report_path=report_path)
+            cpp_online = CppOnlineGrader(
+                binary_path=bin_path,
+                report_path=report_path,
+                metrics_config_path=metrics_config,
+                ego_length_m=args.ego_length,
+                ego_width_m=args.ego_width,
+                ego_wheelbase_m=args.ego_wheelbase,
+                ego_rear_overhang_m=args.ego_rear_overhang,
+            )
             hooks.append(cpp_online)
 
     records = world.run(planner=planner, hooks=hooks)
@@ -247,9 +274,13 @@ def main(argv=None) -> int:
     if bin_path is not None and args.cpp_mode in ("offline", "both"):
         # In "both" mode the offline run overwrites the same report path so the
         # final artefact is the deterministic batch result.
-        print(f"[sim] running C++ scorer in batch mode: {bin_path} {output_path} -> {report_path}")
+        batch_cmd = [str(bin_path)]
+        if metrics_config:
+            batch_cmd.extend(["--metrics-config", metrics_config])
+        batch_cmd.extend([str(output_path), str(report_path)])
+        print(f"[sim] running C++ scorer in batch mode: {' '.join(batch_cmd)}")
         proc = subprocess.run(
-            [str(bin_path), str(output_path), str(report_path)],
+            batch_cmd,
             check=False,
         )
         if proc.returncode != 0:
