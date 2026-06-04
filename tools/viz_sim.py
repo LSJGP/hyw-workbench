@@ -197,6 +197,106 @@ def npcs_from_frame(fr: dict) -> List[NpcView]:
     return out
 
 
+def npcs_for_frame(fr: dict, scenario: Scenario) -> List[NpcView]:
+    npcs = npcs_from_frame(fr)
+    if not npcs:
+        t_us = int(fr.get("timestamp_us", 0))
+        npcs = npcs_at_time(scenario, t_us / 1e6)
+    return npcs
+
+
+def _npc_to_dict(n: NpcView) -> Dict[str, Any]:
+    return {
+        "id": n.id,
+        "object_type": n.object_type,
+        "x": n.x,
+        "y": n.y,
+        "heading": n.heading,
+        "length": n.length,
+        "width": n.width,
+    }
+
+
+def compute_plot_rect(fig, ax, dpi: int) -> Dict[str, float]:
+    """Axes bounding box in saved image pixels (origin top-left)."""
+    fig.canvas.draw()
+    bbox = ax.get_position()
+    fig_w = fig.get_size_inches()[0] * dpi
+    fig_h = fig.get_size_inches()[1] * dpi
+    left = bbox.x0 * fig_w
+    width = bbox.width * fig_w
+    bottom = bbox.y0 * fig_h
+    height = bbox.height * fig_h
+    top = fig_h - bottom - height
+    return {"left": left, "top": top, "width": width, "height": height}
+
+
+def build_overlay_doc(
+    scenario: Scenario,
+    frames: List[dict],
+    *,
+    dpi: int = 100,
+    figsize: Tuple[float, float] = (12.0, 10.0),
+    static_map: Optional[StaticMapDraw] = None,
+    lane_graph: Optional[LaneGraph] = None,
+    route_xy: Optional[List[Tuple[float, float]]] = None,
+    args: Optional[argparse.Namespace] = None,
+    sdc_xy: Optional[List[Tuple[float, float]]] = None,
+) -> Dict[str, Any]:
+    """Build hover-overlay metadata aligned with matplotlib GIF rendering."""
+    if args is None:
+        args = argparse.Namespace(
+            no_reference=False,
+            show_sdc_track=False,
+            ego_length=4.5,
+            ego_width=1.85,
+            ego_rear_overhang=0.95,
+        )
+    if static_map is None:
+        static_map = load_static_map(scenario.lane_graph_path)
+    if lane_graph is None:
+        lane_graph = LaneGraph.load(scenario.lane_graph_path)
+    if route_xy is None:
+        route_pts, _ = build_map_route(scenario, lane_graph, 1.0)
+        route_xy = [(p[0], p[1]) for p in route_pts]
+    if sdc_xy is None and args.show_sdc_track:
+        sdc_xy = _sdc_recorded_xy(scenario)
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=figsize)
+    _draw_frame(ax, scenario, static_map, lane_graph, route_xy, frames, 0, args, sdc_xy)
+    plot_rect = compute_plot_rect(fig, ax, dpi)
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    plt.close(fig)
+
+    overlay_frames: List[Dict[str, Any]] = []
+    for i, fr in enumerate(frames):
+        npcs = npcs_for_frame(fr, scenario)
+        overlay_frames.append({"index": i, "npcs": [_npc_to_dict(n) for n in npcs]})
+
+    img_w = int(round(figsize[0] * dpi))
+    img_h = int(round(figsize[1] * dpi))
+    return {
+        "version": 1,
+        "width": img_w,
+        "height": img_h,
+        "world": {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax},
+        "plot_rect": plot_rect,
+        "frames": overlay_frames,
+    }
+
+
+def write_overlay_json(path: Path, doc: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False)
+
+
 def build_map_route(
     scenario: Scenario, lane_graph: LaneGraph, reference_step: float
 ) -> Tuple[List[Tuple[float, float, float]], List[int]]:
@@ -409,9 +509,7 @@ def _draw_frame(
     t_us = int(fr.get("timestamp_us", 0))
     t_sec = t_us / 1e6
 
-    npcs = npcs_from_frame(fr)
-    if not npcs:
-        npcs = npcs_at_time(scenario, t_sec)
+    npcs = npcs_for_frame(fr, scenario)
     for n in npcs:
         _draw_obb(ax, npc_obb(n), edge="#f9ab00", face="#f9ab00", lw=1.0, zorder=5)
 
@@ -507,7 +605,20 @@ def main() -> int:
         ani = FuncAnimation(fig, anim_fn, frames=len(frames), interval=1000 // max(1, args.fps))
         ani.save(str(out), writer=PillowWriter(fps=args.fps), dpi=args.dpi)
         _fix_gif_frame_duration(out, args.fps)
+        overlay_path = out.with_name(out.stem + "_overlay.json")
+        overlay_doc = build_overlay_doc(
+            scenario,
+            frames,
+            dpi=args.dpi,
+            static_map=static_map,
+            lane_graph=lane_graph,
+            route_xy=route_xy,
+            args=args,
+            sdc_xy=sdc_xy,
+        )
+        write_overlay_json(overlay_path, overlay_doc)
         print(f"[viz] wrote {out}")
+        print(f"[viz] wrote {overlay_path}")
         plt.close(fig)
         return 0
 

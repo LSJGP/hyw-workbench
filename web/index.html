@@ -227,6 +227,25 @@
     .viewer-results tr.clickable:hover { background: rgba(59, 130, 246, 0.08); }
     .viewer-results tr.active { background: rgba(59, 130, 246, 0.15); }
 
+    .npc-tooltip {
+      position: fixed;
+      z-index: 1000;
+      pointer-events: none;
+      padding: 0.45rem 0.65rem;
+      border-radius: 6px;
+      border: 1px solid rgba(249, 171, 0, 0.55);
+      background: rgba(15, 20, 28, 0.92);
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      display: none;
+    }
+    .npc-tooltip.visible { display: block; }
+    .npc-tooltip .npc-type { color: var(--muted); font-size: 0.72rem; }
+
     /* ── 右：日志 ── */
     .log-panel {
       display: flex;
@@ -446,6 +465,7 @@
         <div class="viewer-zoom-wrap" id="viewer-zoom-wrap" hidden>
           <canvas id="gif-canvas"></canvas>
         </div>
+        <div class="npc-tooltip" id="npc-tooltip" aria-hidden="true"></div>
       </div>
       <div class="viewer-controls" id="viewer-controls" hidden>
         <div class="frame-nav">
@@ -589,6 +609,7 @@
       zoomState.panX = zoomState.panStartX + (e.clientX - zoomState.dragStartX);
       zoomState.panY = zoomState.panStartY + (e.clientY - zoomState.dragStartY);
       applyViewerTransform();
+      hideNpcTooltip();
     }
 
     function handleViewerMouseUp() {
@@ -608,7 +629,110 @@
       playing: false,
       playTimer: null,
       loadToken: 0,
+      overlay: null,
     };
+
+    function hideNpcTooltip() {
+      const tip = $("npc-tooltip");
+      tip.classList.remove("visible");
+      tip.setAttribute("aria-hidden", "true");
+    }
+
+    function clientToCanvasPixel(clientX, clientY) {
+      const canvas = $("gif-canvas");
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return {
+        px: (clientX - rect.left) * (canvas.width / rect.width),
+        py: (clientY - rect.top) * (canvas.height / rect.height),
+      };
+    }
+
+    function pixelToWorld(px, py, overlay) {
+      const { xmin, ymin, xmax, ymax } = overlay.world;
+      const pr = overlay.plot_rect;
+      const wx = xmin + ((px - pr.left) / pr.width) * (xmax - xmin);
+      const wy = ymax - ((py - pr.top) / pr.height) * (ymax - ymin);
+      return { wx, wy };
+    }
+
+    function pointInNpcOBB(wx, wy, npc) {
+      const hl = Math.max(0.5, npc.length * 0.5);
+      const hw = Math.max(0.3, npc.width * 0.5);
+      const dx = wx - npc.x;
+      const dy = wy - npc.y;
+      const c = Math.cos(npc.heading);
+      const s = Math.sin(npc.heading);
+      const localX = dx * c + dy * s;
+      const localY = -dx * s + dy * c;
+      return Math.abs(localX) <= hl && Math.abs(localY) <= hw;
+    }
+
+    function hitTestNpc(wx, wy, npcs) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const npc of npcs) {
+        if (!pointInNpcOBB(wx, wy, npc)) continue;
+        const d = (wx - npc.x) ** 2 + (wy - npc.y) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          best = npc;
+        }
+      }
+      return best;
+    }
+
+    function showNpcTooltip(npc, clientX, clientY) {
+      const tip = $("npc-tooltip");
+      tip.innerHTML =
+        `<div>id: ${npc.id}</div>` +
+        `<div>x: ${npc.x.toFixed(2)} m</div>` +
+        `<div>y: ${npc.y.toFixed(2)} m</div>` +
+        `<div class="npc-type">${npc.object_type || "NPC"}</div>`;
+      tip.classList.add("visible");
+      tip.setAttribute("aria-hidden", "false");
+      const offset = 14;
+      tip.style.left = `${clientX + offset}px`;
+      tip.style.top = `${clientY + offset}px`;
+    }
+
+    function handleNpcHover(e) {
+      if ($("viewer-zoom-wrap").hidden || zoomState.dragging) {
+        hideNpcTooltip();
+        return;
+      }
+      const overlay = gifState.overlay;
+      if (!overlay || !overlay.frames || !overlay.frames.length) {
+        hideNpcTooltip();
+        return;
+      }
+      const pixel = clientToCanvasPixel(e.clientX, e.clientY);
+      if (!pixel) {
+        hideNpcTooltip();
+        return;
+      }
+      const frame = overlay.frames[gifState.index];
+      if (!frame || !frame.npcs || !frame.npcs.length) {
+        hideNpcTooltip();
+        return;
+      }
+      const { wx, wy } = pixelToWorld(pixel.px, pixel.py, overlay);
+      const hit = hitTestNpc(wx, wy, frame.npcs);
+      if (hit) showNpcTooltip(hit, e.clientX, e.clientY);
+      else hideNpcTooltip();
+    }
+
+    async function fetchOverlay(relFile, token) {
+      try {
+        const r = await fetch(`/api/viz/overlay?file=${encodeURIComponent(relFile)}`);
+        if (!r.ok) return null;
+        const doc = await r.json();
+        if (token !== gifState.loadToken) return null;
+        return doc;
+      } catch {
+        return null;
+      }
+    }
 
     function urlToRelFile(url) {
       const idx = url.indexOf("/output/");
@@ -719,6 +843,7 @@
         $("frame-info").textContent = `${i + 1} / ${gifState.frameCount}`;
         $("frame-slider").value = String(i);
         updateFrameButtons();
+        hideNpcTooltip();
         requestAnimationFrame(centerViewerIfFit);
       } catch (e) {
         $("viewer-placeholder").hidden = false;
@@ -790,6 +915,8 @@
       clearGifCache();
       gifState.frameCount = 0;
       gifState.index = 0;
+      gifState.overlay = null;
+      hideNpcTooltip();
       resetViewerZoom();
       $("gif-status").textContent = "加载中…";
       $("viewer-controls").hidden = true;
@@ -814,6 +941,9 @@
         gifState.frameCount = info.frames;
         gifState.width = info.width;
         gifState.height = info.height;
+        const overlay = await fetchOverlay(relFile, token);
+        if (token !== gifState.loadToken) return;
+        gifState.overlay = overlay;
         $("viewer-placeholder").hidden = true;
         $("viewer-zoom-wrap").hidden = false;
         $("viewer-controls").hidden = false;
@@ -1120,6 +1250,8 @@
 
     $("viewer-stage").addEventListener("wheel", handleViewerWheel, { passive: false });
     $("viewer-stage").addEventListener("mousedown", handleViewerMouseDown);
+    $("viewer-stage").addEventListener("mousemove", handleNpcHover);
+    $("viewer-stage").addEventListener("mouseleave", hideNpcTooltip);
     window.addEventListener("mousemove", handleViewerMouseMove);
     window.addEventListener("mouseup", handleViewerMouseUp);
 

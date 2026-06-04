@@ -21,7 +21,7 @@ WORKBENCH_ROOT = WEB_ROOT.parent
 sys.path.insert(0, str(WORKBENCH_ROOT))
 sys.path.insert(0, str(WORKBENCH_ROOT / "tools"))
 
-from hyw_paths import OUTPUT_DIR, WORKBENCH_ROOT  # noqa: E402
+from hyw_paths import OUTPUT_DIR, SCENARIOS_DIR, WORKBENCH_ROOT  # noqa: E402
 
 from batch_run_scenarios import (  # noqa: E402
     CPP_MODES,
@@ -113,6 +113,46 @@ def _gif_frame_png(rel: str, index: int) -> Optional[bytes]:
     buf = io.BytesIO()
     im.convert("RGBA").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
+
+
+def _scenario_from_gif_path(gif_path: Path) -> Optional[str]:
+    name = gif_path.name
+    if name.endswith("_sim.gif"):
+        return name[: -len("_sim.gif")]
+    return None
+
+
+def _viz_overlay(rel: str) -> Optional[Dict[str, Any]]:
+    gif_path = _safe_output_file(rel)
+    if not gif_path or gif_path.suffix.lower() != ".gif":
+        return None
+
+    overlay_path = gif_path.with_name(gif_path.stem + "_overlay.json")
+    if overlay_path.is_file():
+        with open(overlay_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    scenario_name = _scenario_from_gif_path(gif_path)
+    if not scenario_name:
+        return None
+
+    sim_log_path = OUTPUT_DIR / "log" / f"{scenario_name}_sim_log.json"
+    scenario_dir = SCENARIOS_DIR / scenario_name
+    if not sim_log_path.is_file() or not scenario_dir.is_dir():
+        return None
+
+    sys.path.insert(0, str(WORKBENCH_ROOT / "pysim"))
+    try:
+        from viz_sim import build_overlay_doc, load_sim_log
+        from waymo_sim.scenario import load_scenario
+
+        scenario = load_scenario(scenario_dir, input_format="auto")
+        frames = load_sim_log(sim_log_path)
+        if not frames:
+            return None
+        return build_overlay_doc(scenario, frames, dpi=100)
+    except Exception:
+        return None
 
 
 def _list_viz_gifs() -> list[dict[str, str]]:
@@ -225,6 +265,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(png)
             return
+        if path == "/api/viz/overlay":
+            qs = parse_qs(urlparse(self.path).query)
+            rel = (qs.get("file") or [""])[0].strip()
+            overlay = _viz_overlay(rel)
+            if not overlay:
+                return self._send_json(404, {"error": "overlay not found"})
+            return self._send_json(200, overlay)
         if path == "/api/meta":
             grading_bin = Path(DEFAULT_GRADING_BIN)
             planner_bin = Path(DEFAULT_PLANNER_BIN)
