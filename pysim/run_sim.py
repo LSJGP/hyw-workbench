@@ -13,7 +13,7 @@ Example:
       --planner idm_pure_pursuit \\
       --dt 0.1
 
-  (Default SimLog: <repo>/output/log/sim_log.json; grading report: <repo>/output/report/grading_report.json.)
+  (Default SimLog: <repo>/output/log/sim_log.json; grading report dir: <repo>/output/report/<time>_<scenario>/.)
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import math
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -31,7 +32,13 @@ REPO_ROOT = THIS_DIR.parent
 DEFAULT_LOG_DIR = REPO_ROOT / "output" / "log"
 DEFAULT_REPORT_DIR = REPO_ROOT / "output" / "report"
 DEFAULT_SIMLOG_PATH = DEFAULT_LOG_DIR / "sim_log.json"
-DEFAULT_GRADING_REPORT_PATH = DEFAULT_REPORT_DIR / "grading_report.json"
+def _default_report_dir(scenario_dir: Path, output_path: Path) -> Path:
+    scenario_name = scenario_dir.name
+    stem = output_path.stem
+    if stem.endswith("_sim_log"):
+        scenario_name = stem[: -len("_sim_log")]
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return DEFAULT_REPORT_DIR / f"{ts}_{scenario_name}"
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
@@ -81,7 +88,7 @@ def _parse_args(argv) -> argparse.Namespace:
     p.add_argument(
         "--grading-report",
         default="",
-        help="Where to write the C++ grading_main JSON report (default: <repo>/output/report/grading_report.json)",
+        help="Grading report output directory (default: <repo>/output/report/<time>_<scenario>/)",
     )
     p.add_argument(
         "--cpp-mode",
@@ -230,8 +237,12 @@ def main(argv=None) -> int:
         if not bin_path.is_file():
             print(f"[sim] grading_main not found: {bin_path}", file=sys.stderr)
             return 3
-        report_path = Path(args.grading_report).expanduser().resolve() if args.grading_report else (
-            DEFAULT_GRADING_REPORT_PATH
+        scenario_dir = Path(args.scenario_dir).expanduser().resolve()
+        output_path = Path(args.output).expanduser().resolve()
+        report_path = (
+            Path(args.grading_report).expanduser().resolve()
+            if args.grading_report
+            else _default_report_dir(scenario_dir, output_path)
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         if args.cpp_mode in ("online", "both"):

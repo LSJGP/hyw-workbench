@@ -7,7 +7,7 @@
   binary can re-score offline (batch mode).
 * `CppOnlineGrader` spawns `grading_main --stream` once and feeds it one
   MetricFrameInput JSON per stdin line, so the C++ scorer is **also** online
-  and writes its `grading_report.json` when stdin closes.
+  and writes its grading report directory (summary.json + per-metric files) when stdin closes.
 
 All three paths agree by construction (same thresholds, same liability rules).
 """
@@ -212,7 +212,7 @@ class CppOnlineGrader(FrameHook):
       * `__init__` spawns the binary with stdin piped + stdout/stderr forwarded.
       * `on_frame` writes a single MetricFrameInput JSON line to stdin.
       * `on_finish` closes stdin and waits — the binary then calls `Finish()`
-        and writes the GradingReport JSON to `report_path`.
+        and writes the grading report directory to `report_path`.
 
     The binary's tick lines (`[cpp] frame=K t=Ts ...`) appear on the same TTY
     as the Python `[grader]` output, so the user sees both interleaved live.

@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -200,13 +201,15 @@ def run_one_scenario(
     viz_dir.mkdir(parents=True, exist_ok=True)
 
     sim_log = log_dir / f"{scenario_name}_sim_log.json"
-    report = report_dir / f"{scenario_name}_grading_report.json"
+    report = report_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{scenario_name}"
+    report_summary = report / "summary.json"
     gif_path = viz_dir / f"{scenario_name}_sim.gif"
 
     result: Dict[str, Any] = {
         "scenario": scenario_name,
         "sim_log": str(sim_log),
         "grading_report": str(report) if cfg.run_grading else None,
+        "grading_summary": str(report_summary) if cfg.run_grading else None,
         "gif": str(gif_path) if cfg.make_gif else None,
         "sim_rc": None,
         "viz_rc": None,
@@ -279,9 +282,9 @@ def run_one_scenario(
     result["sim_rc"] = _run(sim_cmd, HYW_SIM, log)
     result["sim_seconds"] = round(time.time() - t0, 2)
 
-    if cfg.run_grading and report.is_file():
+    if cfg.run_grading and report_summary.is_file():
         try:
-            with open(report, encoding="utf-8") as f:
+            with open(report_summary, encoding="utf-8") as f:
                 rep = json.load(f)
             result["passed"] = rep.get("overallPassed")
             result["summaries"] = rep.get("summaries", [])
