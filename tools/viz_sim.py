@@ -231,6 +231,39 @@ def compute_plot_rect(fig, ax, dpi: int) -> Dict[str, float]:
     return {"left": left, "top": top, "width": width, "height": height}
 
 
+def _matplotlib_frame_layout(
+    scenario: Scenario,
+    static_map: StaticMapDraw,
+    lane_graph: LaneGraph,
+    route_xy: List[Tuple[float, float]],
+    frames: List[dict],
+    args: argparse.Namespace,
+    sdc_xy: Optional[List[Tuple[float, float]]],
+    *,
+    dpi: int = 100,
+    figsize: Tuple[float, float] = (12.0, 10.0),
+    frame_idx: int = 0,
+) -> Tuple[int, int, Dict[str, float], Dict[str, float]]:
+    """Match saved GIF layout: image size, axes plot_rect, world limits."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=figsize)
+    _draw_frame(
+        ax, scenario, static_map, lane_graph, route_xy, frames, frame_idx, args, sdc_xy
+    )
+    plot_rect = compute_plot_rect(fig, ax, dpi)
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    img_w = int(round(figsize[0] * dpi))
+    img_h = int(round(figsize[1] * dpi))
+    plt.close(fig)
+    world = {"xmin": float(xmin), "ymin": float(ymin), "xmax": float(xmax), "ymax": float(ymax)}
+    return img_w, img_h, plot_rect, world
+
+
 def build_overlay_doc(
     scenario: Scenario,
     frames: List[dict],
@@ -262,30 +295,29 @@ def build_overlay_doc(
     if sdc_xy is None and args.show_sdc_track:
         sdc_xy = _sdc_recorded_xy(scenario)
 
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(figsize=figsize)
-    _draw_frame(ax, scenario, static_map, lane_graph, route_xy, frames, 0, args, sdc_xy)
-    plot_rect = compute_plot_rect(fig, ax, dpi)
-    xmin, xmax = ax.get_xlim()
-    ymin, ymax = ax.get_ylim()
-    plt.close(fig)
+    img_w, img_h, plot_rect, world = _matplotlib_frame_layout(
+        scenario,
+        static_map,
+        lane_graph,
+        route_xy,
+        frames,
+        args,
+        sdc_xy,
+        dpi=dpi,
+        figsize=figsize,
+        frame_idx=0,
+    )
 
     overlay_frames: List[Dict[str, Any]] = []
     for i, fr in enumerate(frames):
         npcs = npcs_for_frame(fr, scenario)
         overlay_frames.append({"index": i, "npcs": [_npc_to_dict(n) for n in npcs]})
 
-    img_w = int(round(figsize[0] * dpi))
-    img_h = int(round(figsize[1] * dpi))
     return {
         "version": 1,
         "width": img_w,
         "height": img_h,
-        "world": {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax},
+        "world": world,
         "plot_rect": plot_rect,
         "frames": overlay_frames,
     }
@@ -456,7 +488,14 @@ def _draw_full_map(ax, static_map: StaticMapDraw, lane_graph: LaneGraph) -> None
 
 
 def _draw_polyline_xy(
-    ax, pts: Sequence[Tuple[float, float]], *, color: str, lw: float, label: str, ls: str = "-", zorder: int = 3
+    ax,
+    pts: Sequence[Tuple[float, float]],
+    *,
+    color: str,
+    lw: float,
+    label: Optional[str] = None,
+    ls: str = "-",
+    zorder: int = 3,
 ):
     if len(pts) < 2:
         return
@@ -472,6 +511,174 @@ def _draw_obb(ax, box: OBB, *, edge: str, face: str, lw: float, label: Optional[
     ax.plot(xs, ys, color=edge, linewidth=lw, zorder=zorder + 1)
 
 
+GOAL_STAR_MARKERSIZE = 8.4  # original 12, ~30% smaller
+
+
+def _legend_proxies(
+    scenario: Scenario,
+    route_xy: List[Tuple[float, float]],
+    args: argparse.Namespace,
+    sdc_xy: Optional[List[Tuple[float, float]]],
+) -> List[Any]:
+    from matplotlib.lines import Line2D
+
+    proxies: List[Any] = []
+    if not args.no_reference and route_xy:
+        proxies.append(Line2D([0], [0], color="#1a73e8", lw=2.2, label="map reference"))
+    if args.show_sdc_track and sdc_xy:
+        proxies.append(
+            Line2D([0], [0], color="#5f6368", lw=1.2, ls="--", label="SDC recorded")
+        )
+    proxies.append(Line2D([0], [0], color="#34a853", lw=2.0, label="sim ego trail"))
+    if scenario.init_pose:
+        proxies.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="#1a73e8",
+                linestyle="None",
+                markersize=4,
+                label="init",
+            )
+        )
+    if scenario.goal_pose:
+        proxies.append(
+            Line2D(
+                [0],
+                [0],
+                marker="*",
+                color="#ea4335",
+                linestyle="None",
+                markersize=GOAL_STAR_MARKERSIZE,
+                label="goal",
+            )
+        )
+    proxies.append(Line2D([0], [0], color="#f9ab00", lw=1.0, label="NPC"))
+    proxies.append(Line2D([0], [0], color="#137333", lw=2.0, label="sim ego"))
+    return proxies
+
+
+def _draw_static_scene(
+    ax,
+    scenario: Scenario,
+    static_map: StaticMapDraw,
+    lane_graph: LaneGraph,
+    route_xy: List[Tuple[float, float]],
+    args: argparse.Namespace,
+    sdc_xy: Optional[List[Tuple[float, float]]],
+) -> None:
+    """Map + route + markers + legend (CPU rasterized once for GIF export)."""
+    _setup_axes(ax.figure, ax, scenario)
+    _draw_full_map(ax, static_map, lane_graph)
+
+    if not args.no_reference and route_xy:
+        _draw_polyline_xy(ax, route_xy, color="#1a73e8", lw=2.2, zorder=3)
+
+    if args.show_sdc_track and sdc_xy:
+        _draw_polyline_xy(ax, sdc_xy, color="#5f6368", lw=1.2, ls="--", zorder=3)
+
+    if scenario.init_pose:
+        ax.plot(
+            scenario.init_pose.x,
+            scenario.init_pose.y,
+            "o",
+            color="#1a73e8",
+            markersize=4,
+            zorder=6,
+        )
+    if scenario.goal_pose:
+        ax.plot(
+            scenario.goal_pose.x,
+            scenario.goal_pose.y,
+            "*",
+            color="#ea4335",
+            markersize=GOAL_STAR_MARKERSIZE,
+            zorder=9,
+        )
+
+    proxies = _legend_proxies(scenario, route_xy, args, sdc_xy)
+    if proxies:
+        ax.legend(handles=proxies, loc="upper right", fontsize=7, framealpha=0.9)
+
+
+def _draw_obb_artists(
+    ax, box: OBB, *, edge: str, face: str, lw: float, zorder: int
+) -> List[Any]:
+    corners = box.corners()
+    xs = [c[0] for c in corners] + [corners[0][0]]
+    ys = [c[1] for c in corners] + [corners[0][1]]
+    from matplotlib.collections import PolyCollection
+
+    fill = PolyCollection(
+        [[(c[0], c[1]) for c in corners]],
+        facecolors=face,
+        edgecolors=edge,
+        linewidths=lw,
+        alpha=0.35,
+        zorder=zorder,
+    )
+    ax.add_collection(fill)
+    outline, = ax.plot(xs, ys, color=edge, linewidth=lw, zorder=zorder + 1)
+    return [fill, outline]
+
+
+def _draw_dynamic_scene(
+    ax,
+    scenario: Scenario,
+    frames: List[dict],
+    frame_idx: int,
+    args: argparse.Namespace,
+) -> List[Any]:
+    """Per-frame ego / NPC / trail only."""
+    artists: List[Any] = []
+
+    trail = []
+    for i in range(frame_idx + 1):
+        vs = frames[i].get("vehicle_state", frames[i].get("ego", {}))
+        trail.append((float(vs.get("x", 0)), float(vs.get("y", 0))))
+    if len(trail) >= 2:
+        xs, ys = zip(*trail)
+        ln, = ax.plot(xs, ys, color="#34a853", linewidth=2.0, zorder=4)
+        artists.append(ln)
+
+    fr = frames[frame_idx]
+    t_us = int(fr.get("timestamp_us", 0))
+    t_sec = t_us / 1e6
+
+    npcs = npcs_for_frame(fr, scenario)
+    for n in npcs:
+        artists.extend(
+            _draw_obb_artists(
+                ax, npc_obb(n), edge="#f9ab00", face="#f9ab00", lw=1.0, zorder=5
+            )
+        )
+
+    vs = fr.get("vehicle_state", fr.get("ego", {}))
+    ex, ey = float(vs.get("x", 0)), float(vs.get("y", 0))
+    eh = float(vs.get("heading", 0))
+    esp = float(vs.get("speed", 0))
+    ev = fr.get("ego_vehicle", {})
+    elen = float(ev.get("length", args.ego_length))
+    ewid = float(ev.get("width", args.ego_width))
+    erear = float(ev.get("rear_overhang", args.ego_rear_overhang))
+    ebox = ego_obb(ex, ey, eh, elen, ewid, erear)
+    artists.extend(
+        _draw_obb_artists(ax, ebox, edge="#137333", face="#137333", lw=2.0, zorder=7)
+    )
+    pt, = ax.plot(ex, ey, "ko", markersize=3, zorder=8)
+    artists.append(pt)
+
+    rc = fr.get("road_context", {})
+    rc_txt = ""
+    if rc:
+        rc_txt = f"  edge={rc.get('dist_to_road_edge_m', 0):.1f}m"
+    ax.set_title(
+        f"frame {frame_idx}  t={t_sec:.2f}s  speed={esp:.2f} m/s  npcs={len(npcs)}{rc_txt}"
+    )
+    return artists
+
+
 def _draw_frame(
     ax,
     scenario: Scenario,
@@ -484,58 +691,8 @@ def _draw_frame(
     sdc_xy: Optional[List[Tuple[float, float]]],
 ):
     ax.clear()
-    _setup_axes(ax.figure, ax, scenario)
-    _draw_full_map(ax, static_map, lane_graph)
-
-    if not args.no_reference and route_xy:
-        _draw_polyline_xy(ax, route_xy, color="#1a73e8", lw=2.2, label="map reference", zorder=3)
-
-    if args.show_sdc_track and sdc_xy:
-        _draw_polyline_xy(ax, sdc_xy, color="#5f6368", lw=1.2, ls="--", label="SDC recorded", zorder=3)
-
-    trail = []
-    for i in range(frame_idx + 1):
-        vs = frames[i].get("vehicle_state", frames[i].get("ego", {}))
-        trail.append((float(vs.get("x", 0)), float(vs.get("y", 0))))
-    if len(trail) >= 2:
-        _draw_polyline_xy(ax, trail, color="#34a853", lw=2.0, label="sim ego trail", zorder=4)
-
-    if scenario.init_pose:
-        ax.plot(scenario.init_pose.x, scenario.init_pose.y, "o", color="#1a73e8", markersize=7, label="init", zorder=6)
-    if scenario.goal_pose:
-        ax.plot(scenario.goal_pose.x, scenario.goal_pose.y, "*", color="#ea4335", markersize=12, label="goal", zorder=6)
-
-    fr = frames[frame_idx]
-    t_us = int(fr.get("timestamp_us", 0))
-    t_sec = t_us / 1e6
-
-    npcs = npcs_for_frame(fr, scenario)
-    for n in npcs:
-        _draw_obb(ax, npc_obb(n), edge="#f9ab00", face="#f9ab00", lw=1.0, zorder=5)
-
-    vs = fr.get("vehicle_state", fr.get("ego", {}))
-    ex, ey = float(vs.get("x", 0)), float(vs.get("y", 0))
-    eh = float(vs.get("heading", 0))
-    esp = float(vs.get("speed", 0))
-    ev = fr.get("ego_vehicle", {})
-    elen = float(ev.get("length", args.ego_length))
-    ewid = float(ev.get("width", args.ego_width))
-    erear = float(ev.get("rear_overhang", args.ego_rear_overhang))
-    ebox = ego_obb(ex, ey, eh, elen, ewid, erear)
-    _draw_obb(ax, ebox, edge="#137333", face="#137333", lw=2.0, label="sim ego", zorder=7)
-    ax.plot(ex, ey, "ko", markersize=3, zorder=8)
-
-    rc = fr.get("road_context", {})
-    rc_txt = ""
-    if rc:
-        rc_txt = f"  edge={rc.get('dist_to_road_edge_m', 0):.1f}m"
-    ax.set_title(
-        f"frame {frame_idx}  t={t_sec:.2f}s  speed={esp:.2f} m/s  npcs={len(npcs)}{rc_txt}"
-    )
-    handles, labels = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    if by_label:
-        ax.legend(by_label.values(), by_label.keys(), loc="upper right", fontsize=7, framealpha=0.9)
+    _draw_static_scene(ax, scenario, static_map, lane_graph, route_xy, args, sdc_xy)
+    _draw_dynamic_scene(ax, scenario, frames, frame_idx, args)
 
 
 def _sdc_recorded_xy(scenario: Scenario) -> List[Tuple[float, float]]:
@@ -545,8 +702,151 @@ def _sdc_recorded_xy(scenario: Scenario) -> List[Tuple[float, float]]:
     return [(st.x, st.y) for st in tr.states if st.valid]
 
 
+def _world_bounds(scenario: Scenario, margin: float = 15.0) -> Dict[str, float]:
+    meta = scenario.meta.get("bbox", {})
+    if meta:
+        xmin = float(meta.get("xmin", -100))
+        ymin = float(meta.get("ymin", -100))
+        xmax = float(meta.get("xmax", 100))
+        ymax = float(meta.get("ymax", 100))
+    else:
+        xmin = ymin = -100
+        xmax = ymax = 100
+    return {
+        "xmin": xmin - margin,
+        "ymin": ymin - margin,
+        "xmax": xmax + margin,
+        "ymax": ymax + margin,
+    }
+
+
+def _polyline_to_xy_list(poly: Sequence[Sequence[float]]) -> List[List[float]]:
+    return [[float(p[0]), float(p[1])] for p in poly if len(p) >= 2]
+
+
+def _frame_to_viz_dict(
+    fr: dict, scenario: Scenario, args: argparse.Namespace
+) -> Dict[str, Any]:
+    vs = fr.get("vehicle_state", fr.get("ego", {}))
+    ev = fr.get("ego_vehicle", {})
+    npcs = npcs_for_frame(fr, scenario)
+    return {
+        "index": int(fr.get("frame_id", 0)),
+        "timestamp_us": int(fr.get("timestamp_us", 0)),
+        "ego": {
+            "x": float(vs.get("x", 0)),
+            "y": float(vs.get("y", 0)),
+            "heading": float(vs.get("heading", 0)),
+            "speed": float(vs.get("speed", 0)),
+            "length": float(ev.get("length", args.ego_length)),
+            "width": float(ev.get("width", args.ego_width)),
+            "rear_overhang": float(ev.get("rear_overhang", args.ego_rear_overhang)),
+        },
+        "npcs": [_npc_to_dict(n) for n in npcs],
+    }
+
+
+def build_viz_scene_doc(
+    scenario: Scenario,
+    frames: List[dict],
+    *,
+    dpi: int = 100,
+    figsize: Tuple[float, float] = (12.0, 10.0),
+    static_map: Optional[StaticMapDraw] = None,
+    lane_graph: Optional[LaneGraph] = None,
+    route_xy: Optional[List[Tuple[float, float]]] = None,
+    args: Optional[argparse.Namespace] = None,
+    sdc_xy: Optional[List[Tuple[float, float]]] = None,
+) -> Dict[str, Any]:
+    """JSON scene for WebGL viewer (map once + per-frame ego/npcs)."""
+    if args is None:
+        args = argparse.Namespace(
+            no_reference=False,
+            show_sdc_track=False,
+            ego_length=4.5,
+            ego_width=1.85,
+            ego_rear_overhang=0.95,
+        )
+    if static_map is None:
+        static_map = load_static_map(scenario.lane_graph_path)
+    if lane_graph is None:
+        lane_graph = LaneGraph.load(scenario.lane_graph_path)
+    if route_xy is None and not args.no_reference:
+        route_pts, _ = build_map_route(scenario, lane_graph, 1.0)
+        route_xy = [(p[0], p[1]) for p in route_pts]
+    elif route_xy is None:
+        route_xy = []
+    if sdc_xy is None and args.show_sdc_track:
+        sdc_xy = _sdc_recorded_xy(scenario)
+
+    img_w, img_h, plot_rect, world = _matplotlib_frame_layout(
+        scenario,
+        static_map,
+        lane_graph,
+        route_xy,
+        frames,
+        args,
+        sdc_xy,
+        dpi=dpi,
+        figsize=figsize,
+        frame_idx=0,
+    )
+
+    lane_centerlines: List[Dict[str, Any]] = []
+    for lane in lane_graph.lanes.values():
+        if len(lane.centerline) < 2:
+            continue
+        lane_centerlines.append(
+            {
+                "xy": [[p[0], p[1]] for p in lane.centerline],
+                "color": "#c4c7c5" if lane.type == "BIKE_LANE" else "#9aa0a6",
+                "width": 0.85 if lane.type == "FREEWAY" else 0.55,
+            }
+        )
+
+    doc: Dict[str, Any] = {
+        "version": 1,
+        "renderer": "webgl",
+        "scenario_id": scenario.scenario_id,
+        "width": img_w,
+        "height": img_h,
+        "dpi": dpi,
+        "world": world,
+        "plot_rect": plot_rect,
+        "background": "#ffffff",
+        "map": {
+            "crosswalks": [
+                _polyline_to_xy_list(cw.get("polygon", []))
+                for cw in static_map.crosswalks
+            ],
+            "road_edges": [
+                _polyline_to_xy_list(e.get("polyline", []))
+                for e in static_map.road_edges
+            ],
+            "road_lines": [
+                _polyline_to_xy_list(r.get("polyline", []))
+                for r in static_map.road_lines
+            ],
+            "lane_centerlines": lane_centerlines,
+        },
+        "route_xy": [[x, y] for x, y in (route_xy or [])],
+        "sdc_xy": [[x, y] for x, y in (sdc_xy or [])],
+        "init": None,
+        "goal": None,
+        "frames": [_frame_to_viz_dict(fr, scenario, args) for fr in frames],
+    }
+    if scenario.init_pose:
+        doc["init"] = {"x": scenario.init_pose.x, "y": scenario.init_pose.y}
+    if scenario.goal_pose:
+        doc["goal"] = {"x": scenario.goal_pose.x, "y": scenario.goal_pose.y}
+    return doc
+
+
 def main() -> int:
     try:
+        import matplotlib
+
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation, PillowWriter
     except ImportError:
@@ -597,13 +897,43 @@ def main() -> int:
         out = args.output or (OUTPUT_DIR / "viz" / "sim_anim.gif")
         out = out.expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
+        import numpy as np
+
         fig, ax = plt.subplots(figsize=(12, 10))
+        fig.set_dpi(args.dpi)
+        _draw_static_scene(ax, scenario, static_map, lane_graph, route_xy, args, sdc_xy)
+        ax.set_title("")
+        fig.canvas.draw()
+        static_bg = fig.canvas.copy_from_bbox(ax.bbox)
+        dynamic_artists: List[Any] = []
 
         def anim_fn(i: int):
-            _draw_frame(ax, scenario, static_map, lane_graph, route_xy, frames, i, args, sdc_xy)
+            fig.canvas.restore_region(static_bg)
+            for art in dynamic_artists:
+                try:
+                    art.remove()
+                except (NotImplementedError, ValueError):
+                    pass
+            dynamic_artists.clear()
+            dynamic_artists.extend(
+                _draw_dynamic_scene(ax, scenario, frames, i, args)
+            )
+            for art in dynamic_artists:
+                ax.draw_artist(art)
+            fig.canvas.draw()
 
-        ani = FuncAnimation(fig, anim_fn, frames=len(frames), interval=1000 // max(1, args.fps))
-        ani.save(str(out), writer=PillowWriter(fps=args.fps), dpi=args.dpi)
+        ani = FuncAnimation(
+            fig,
+            anim_fn,
+            frames=len(frames),
+            interval=1000 // max(1, args.fps),
+            blit=False,
+        )
+        print(
+            f"[viz] GIF export: matplotlib CPU (static map cached once; no GPU). "
+            f"frames={len(frames)} dpi={args.dpi}"
+        )
+        ani.save(str(out), writer=PillowWriter(fps=args.fps))
         _fix_gif_frame_duration(out, args.fps)
         overlay_path = out.with_name(out.stem + "_overlay.json")
         overlay_doc = build_overlay_doc(

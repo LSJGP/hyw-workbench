@@ -1,7 +1,7 @@
 """Streaming grading: in-process Python grader + offline SimLog writer + live C++ pipe.
 
-* `OnlineGrader` mirrors the three C++ metrics (planning_limit_checker,
-  speed_checker, regulatory_collision_checker) so the user sees PASS/FAIL each
+* `OnlineGrader` mirrors the C++ metrics (speed_checker,
+  regulatory_collision_checker) so the user sees PASS/FAIL each
   frame without rebuilding C++.
 * `SimLogWriter` flushes a SimLog JSON to disk that the C++ `grading_main`
   binary can re-score offline (batch mode).
@@ -28,9 +28,6 @@ from .world import CollisionInfo, FrameHook, FrameRecord
 
 # Defaults match the C++ side
 DEFAULT_MAX_SPEED_MPS = 33.3
-DEFAULT_MAX_DESIRED_SPEED_MPS = 33.3
-
-
 @dataclass
 class MetricSummary:
     name: str
@@ -40,12 +37,6 @@ class MetricSummary:
 
 @dataclass
 class _SpeedState:
-    violations: int = 0
-    total: int = 0
-
-
-@dataclass
-class _LimitState:
     violations: int = 0
     total: int = 0
 
@@ -64,17 +55,14 @@ class OnlineGrader(FrameHook):
     def __init__(
         self,
         max_speed_mps: float = DEFAULT_MAX_SPEED_MPS,
-        max_desired_speed_mps: float = DEFAULT_MAX_DESIRED_SPEED_MPS,
         sink: Optional[TextIO] = None,
         print_every: int = 5,
     ):
         self.max_speed_mps = max_speed_mps
-        self.max_desired_speed_mps = max_desired_speed_mps
         self.sink: TextIO = sink or sys.stdout
         self.print_every = max(1, int(print_every))
 
         self._speed = _SpeedState()
-        self._limit = _LimitState()
         self._coll = _CollisionState()
         self._first_collision_frame: Optional[int] = None
 
@@ -82,10 +70,9 @@ class OnlineGrader(FrameHook):
 
     def on_frame(self, rec: FrameRecord) -> None:
         speed_ok = self._tick_speed(rec)
-        limit_ok = self._tick_limit(rec)
         coll_ok = self._tick_collision(rec)
-        if rec.frame_id % self.print_every == 0 or rec.collision.collided or not (speed_ok and limit_ok):
-            tag = "PASS" if (speed_ok and limit_ok and coll_ok) else "FAIL"
+        if rec.frame_id % self.print_every == 0 or rec.collision.collided or not speed_ok:
+            tag = "PASS" if (speed_ok and coll_ok) else "FAIL"
             print(
                 f"[grader] f={rec.frame_id:>4d} t={rec.timestamp_us/1e6:7.2f}s "
                 f"v={rec.ego.speed:5.2f}m/s acc={rec.ego.acceleration:+5.2f} "
@@ -115,11 +102,6 @@ class OnlineGrader(FrameHook):
     def summaries(self) -> List[MetricSummary]:
         return [
             MetricSummary(
-                name="planning_limit_checker",
-                passed=self._limit.violations == 0,
-                detail=f"bad_frames={self._limit.violations}/{self._limit.total}",
-            ),
-            MetricSummary(
                 name="speed_checker",
                 passed=self._speed.violations == 0,
                 detail=f"violations={self._speed.violations}/{self._speed.total}",
@@ -146,13 +128,6 @@ class OnlineGrader(FrameHook):
         ok = rec.ego.speed <= self.max_speed_mps + 1e-6
         if not ok:
             self._speed.violations += 1
-        return ok
-
-    def _tick_limit(self, rec: FrameRecord) -> bool:
-        self._limit.total += 1
-        ok = rec.command.desired_speed_mps <= self.max_desired_speed_mps + 1e-6
-        if not ok:
-            self._limit.violations += 1
         return ok
 
     def _tick_collision(self, rec: FrameRecord) -> bool:

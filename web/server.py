@@ -122,35 +122,74 @@ def _scenario_from_gif_path(gif_path: Path) -> Optional[str]:
     return None
 
 
-def _viz_overlay(rel: str) -> Optional[Dict[str, Any]]:
+def _viz_sim_context(rel: str) -> Optional[Dict[str, Any]]:
     gif_path = _safe_output_file(rel)
     if not gif_path or gif_path.suffix.lower() != ".gif":
         return None
-
-    overlay_path = gif_path.with_name(gif_path.stem + "_overlay.json")
-    if overlay_path.is_file():
-        with open(overlay_path, encoding="utf-8") as f:
-            return json.load(f)
-
     scenario_name = _scenario_from_gif_path(gif_path)
     if not scenario_name:
         return None
-
     sim_log_path = OUTPUT_DIR / "log" / f"{scenario_name}_sim_log.json"
     scenario_dir = SCENARIOS_DIR / scenario_name
     if not sim_log_path.is_file() or not scenario_dir.is_dir():
         return None
+    return {
+        "gif_path": gif_path,
+        "scenario_name": scenario_name,
+        "sim_log_path": sim_log_path,
+        "scenario_dir": scenario_dir,
+    }
 
+
+def _load_viz_sim_data(ctx: Dict[str, Any]) -> Optional[tuple[Any, list]]:
     sys.path.insert(0, str(WORKBENCH_ROOT / "pysim"))
     try:
-        from viz_sim import build_overlay_doc, load_sim_log
+        from viz_sim import load_sim_log
         from waymo_sim.scenario import load_scenario
 
-        scenario = load_scenario(scenario_dir, input_format="auto")
-        frames = load_sim_log(sim_log_path)
+        scenario = load_scenario(ctx["scenario_dir"], input_format="auto")
+        frames = load_sim_log(ctx["sim_log_path"])
         if not frames:
             return None
+        return scenario, frames
+    except Exception:
+        return None
+
+
+def _viz_overlay(rel: str) -> Optional[Dict[str, Any]]:
+    ctx = _viz_sim_context(rel)
+    if not ctx:
+        return None
+
+    overlay_path = ctx["gif_path"].with_name(ctx["gif_path"].stem + "_overlay.json")
+    if overlay_path.is_file():
+        with open(overlay_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    loaded = _load_viz_sim_data(ctx)
+    if not loaded:
+        return None
+    scenario, frames = loaded
+    try:
+        from viz_sim import build_overlay_doc
+
         return build_overlay_doc(scenario, frames, dpi=100)
+    except Exception:
+        return None
+
+
+def _viz_scene(rel: str) -> Optional[Dict[str, Any]]:
+    ctx = _viz_sim_context(rel)
+    if not ctx:
+        return None
+    loaded = _load_viz_sim_data(ctx)
+    if not loaded:
+        return None
+    scenario, frames = loaded
+    try:
+        from viz_sim import build_viz_scene_doc
+
+        return build_viz_scene_doc(scenario, frames)
     except Exception:
         return None
 
@@ -272,6 +311,13 @@ class Handler(BaseHTTPRequestHandler):
             if not overlay:
                 return self._send_json(404, {"error": "overlay not found"})
             return self._send_json(200, overlay)
+        if path == "/api/viz/scene":
+            qs = parse_qs(urlparse(self.path).query)
+            rel = (qs.get("file") or [""])[0].strip()
+            scene = _viz_scene(rel)
+            if not scene:
+                return self._send_json(404, {"error": "scene not found"})
+            return self._send_json(200, scene)
         if path == "/api/meta":
             grading_bin = Path(DEFAULT_GRADING_BIN)
             planner_bin = Path(DEFAULT_PLANNER_BIN)
@@ -300,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                         "log_level": "info",
                         "gif_fps": 120,
                         "gif_dpi": 100,
-                        "make_gif": True,
+                        "make_gif": False,
                         "run_grading": True,
                         "sim_playback_fps": 10,
                     },
@@ -358,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
             grading_bin=body.get("grading_bin", ""),
             log_level=body.get("log_level", "info"),
             log_dir=body.get("log_dir", ""),
-            make_gif=bool(body.get("make_gif", True)),
+            make_gif=bool(body.get("make_gif", False)),
             gif_fps=int(body.get("gif_fps", 120)),
             gif_dpi=int(body.get("gif_dpi", 100)),
             gif_reference_step=float(body.get("gif_reference_step", 1.0)),

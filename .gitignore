@@ -47,3 +47,6 @@ sim_*.log
 *~
 .DS_Store
 Thumbs.db
+
+# 本地一次性远程 SSH 配置（不提交）
+.local-setup/

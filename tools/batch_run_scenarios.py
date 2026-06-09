@@ -81,7 +81,7 @@ class BatchConfig:
     log_level: str = "info"
     log_dir: str = ""
     source_tag: str = "batch_ui"
-    make_gif: bool = True
+    make_gif: bool = False
     gif_fps: int = 120
     gif_dpi: int = 100
     gif_reference_step: float = 1.0

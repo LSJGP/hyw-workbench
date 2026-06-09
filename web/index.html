@@ -163,10 +163,14 @@
       line-height: 0;
       width: fit-content;
     }
-    .viewer-zoom-wrap canvas {
+    .viewer-zoom-wrap canvas,
+    #viz-host canvas {
       display: block;
       max-width: 100%;
       max-height: calc(100vh - 260px);
+    }
+    #viz-host {
+      line-height: 0;
     }
     .viewer-placeholder {
       color: var(--muted);
@@ -418,8 +422,8 @@
       <section>
         <h2>GIF 可视化</h2>
         <div class="inline">
-          <input type="checkbox" id="make-gif" checked />
-          <label for="make-gif" style="margin:0">生成 GIF</label>
+          <input type="checkbox" id="make-gif" />
+          <label for="make-gif" style="margin:0" title="GIF 用 matplotlib CPU 逐帧渲染，较慢；播包可用 WebGL（仅需 sim_log）">生成 GIF（慢，可选）</label>
         </div>
         <div class="row2">
           <div>
@@ -459,11 +463,12 @@
       </div>
       <div class="viewer-stage" id="viewer-stage" title="Ctrl + 滚轮缩放；放大后按住左键拖拽平移">
         <div class="viewer-placeholder" id="viewer-placeholder">
-          运行仿真后在此查看 GIF，或从下拉框选择已有 output/viz/*.gif<br />
-          <span style="font-size:0.8rem;color:var(--muted)">Ctrl + 滚轮缩放 · 放大后拖拽平移</span>
+          运行仿真后在此查看（WebGL 优先），或从下拉框选择已有 output/viz/*.gif<br />
+          <span style="font-size:0.8rem;color:var(--muted)">Ctrl + 滚轮缩放 · 放大后拖拽平移 · 悬停 NPC 显示 id</span>
         </div>
         <div class="viewer-zoom-wrap" id="viewer-zoom-wrap" hidden>
-          <canvas id="gif-canvas"></canvas>
+          <div id="viz-host"></div>
+          <canvas id="gif-canvas" hidden></canvas>
         </div>
         <div class="npc-tooltip" id="npc-tooltip" aria-hidden="true"></div>
       </div>
@@ -500,6 +505,8 @@
   </main>
 
   <script type="module">
+    import { VizWebGLRenderer } from "./viz_webgl.js";
+
     const $ = (id) => document.getElementById(id);
 
     /** Plain-text fallback if log-highlighter.js fails to load. */
@@ -630,6 +637,9 @@
       playTimer: null,
       loadToken: 0,
       overlay: null,
+      viewerMode: "gif",
+      scene: null,
+      webgl: null,
     };
 
     function hideNpcTooltip() {
@@ -638,8 +648,16 @@
       tip.setAttribute("aria-hidden", "true");
     }
 
+    function activeViewCanvas() {
+      if (gifState.viewerMode === "webgl" && gifState.webgl) {
+        return gifState.webgl.getCanvas();
+      }
+      return $("gif-canvas");
+    }
+
     function clientToCanvasPixel(clientX, clientY) {
-      const canvas = $("gif-canvas");
+      const canvas = activeViewCanvas();
+      if (!canvas || canvas.hidden) return null;
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return null;
       return {
@@ -701,6 +719,12 @@
         hideNpcTooltip();
         return;
       }
+      if (gifState.viewerMode === "webgl" && gifState.webgl) {
+        const hit = gifState.webgl.hitTestNpc(e.clientX, e.clientY);
+        if (hit) showNpcTooltip(hit, e.clientX, e.clientY);
+        else hideNpcTooltip();
+        return;
+      }
       const overlay = gifState.overlay;
       if (!overlay || !overlay.frames || !overlay.frames.length) {
         hideNpcTooltip();
@@ -720,6 +744,18 @@
       const hit = hitTestNpc(wx, wy, frame.npcs);
       if (hit) showNpcTooltip(hit, e.clientX, e.clientY);
       else hideNpcTooltip();
+    }
+
+    async function fetchScene(relFile, token) {
+      try {
+        const r = await fetch(`/api/viz/scene?file=${encodeURIComponent(relFile)}`);
+        if (!r.ok) return null;
+        const doc = await r.json();
+        if (token !== gifState.loadToken) return null;
+        return doc;
+      } catch {
+        return null;
+      }
     }
 
     async function fetchOverlay(relFile, token) {
@@ -793,7 +829,12 @@
       const mode = $("playback-mode").selectedOptions[0]?.textContent || "";
       const timing = `${mode} · ${fps} fps（${delayMs} ms/帧）`;
       const cached = gifState.cache.size;
-      const cacheHint = cached < gifState.frameCount ? ` · 缓存 ${cached}/${gifState.frameCount}` : "";
+      const cacheHint =
+        gifState.viewerMode === "webgl"
+          ? " · WebGL"
+          : cached < gifState.frameCount
+            ? ` · 缓存 ${cached}/${gifState.frameCount}`
+            : "";
       $("gif-status").textContent = `${base} · ${timing}${cacheHint}`;
     }
 
@@ -825,8 +866,23 @@
       $("frame-play").textContent = "▶ 播放";
     }
 
+    function drawFrameWebGL(i) {
+      if (i < 0 || i >= gifState.frameCount || !gifState.webgl) return;
+      gifState.webgl.setFrame(i);
+      gifState.index = i;
+      $("frame-info").textContent = `${i + 1} / ${gifState.frameCount}`;
+      $("frame-slider").value = String(i);
+      updateFrameButtons();
+      hideNpcTooltip();
+      requestAnimationFrame(centerViewerIfFit);
+    }
+
     async function drawFrame(i) {
       if (i < 0 || i >= gifState.frameCount) return;
+      if (gifState.viewerMode === "webgl") {
+        drawFrameWebGL(i);
+        return;
+      }
       const token = gifState.loadToken;
       try {
         const bitmap = await fetchFrameBitmap(i, token);
@@ -894,6 +950,7 @@
     }
 
     async function prefetchFrames(token) {
+      if (gifState.viewerMode === "webgl") return;
       const batch = 6;
       for (let start = 0; start < gifState.frameCount; start += batch) {
         if (token !== gifState.loadToken) return;
@@ -916,13 +973,21 @@
       gifState.frameCount = 0;
       gifState.index = 0;
       gifState.overlay = null;
+      gifState.scene = null;
+      gifState.viewerMode = "gif";
+      if (gifState.webgl) {
+        await gifState.webgl.destroy();
+        gifState.webgl = null;
+      }
+      $("gif-canvas").hidden = true;
+      $("viz-host").hidden = false;
       hideNpcTooltip();
       resetViewerZoom();
       $("gif-status").textContent = "加载中…";
       $("viewer-controls").hidden = true;
       $("viewer-zoom-wrap").hidden = true;
       $("viewer-placeholder").hidden = false;
-      $("viewer-placeholder").textContent = "加载 GIF…";
+      $("viewer-placeholder").textContent = "加载场景…";
 
       if (!url) {
         $("gif-status").textContent = "";
@@ -932,24 +997,75 @@
 
       try {
         const relFile = urlToRelFile(url);
+        gifState.relFile = relFile;
+        const scene = await fetchScene(relFile, token);
+        if (token !== gifState.loadToken) return;
+
+        if (scene && scene.frames && scene.frames.length) {
+          try {
+            gifState.viewerMode = "webgl";
+            gifState.scene = scene;
+            gifState.webgl = new VizWebGLRenderer($("viz-host"));
+            await gifState.webgl.loadScene(scene);
+            gifState.frameCount = scene.frames.length;
+            gifState.width = scene.width;
+            gifState.height = scene.height;
+            gifState.overlay = {
+              world: scene.world,
+              width: scene.width,
+              height: scene.height,
+              plot_rect: scene.plot_rect || {
+                left: 0,
+                top: 0,
+                width: scene.width,
+                height: scene.height,
+              },
+              frames: scene.frames.map((fr) => ({ index: fr.index, npcs: fr.npcs || [] })),
+            };
+            $("viewer-placeholder").hidden = true;
+            $("viewer-zoom-wrap").hidden = false;
+            $("viewer-controls").hidden = false;
+            $("frame-slider").max = String(scene.frames.length - 1);
+            $("frame-slider").value = "0";
+            $("gif-status").dataset.base =
+              `${scene.frames.length} 帧 · ${scene.width}×${scene.height} · WebGL · ${url.split("/").pop()}`;
+            syncPlaybackFpsFromMode();
+            refreshFrameDelays();
+            drawFrameWebGL(0);
+            requestAnimationFrame(centerViewerIfFit);
+            return;
+          } catch (webglErr) {
+            console.warn("WebGL 加载失败，回退 GIF:", webglErr);
+            if (gifState.webgl) {
+              await gifState.webgl.destroy();
+              gifState.webgl = null;
+            }
+            gifState.viewerMode = "gif";
+            gifState.scene = null;
+            $("viz-host").hidden = true;
+            $("gif-canvas").hidden = false;
+          }
+        }
+
         const infoR = await fetch(`/api/gif/info?file=${encodeURIComponent(relFile)}`);
         if (!infoR.ok) throw new Error(`info HTTP ${infoR.status}`);
         const info = await infoR.json();
         if (token !== gifState.loadToken) return;
 
-        gifState.relFile = relFile;
         gifState.frameCount = info.frames;
         gifState.width = info.width;
         gifState.height = info.height;
         const overlay = await fetchOverlay(relFile, token);
         if (token !== gifState.loadToken) return;
         gifState.overlay = overlay;
+        $("viz-host").hidden = true;
+        $("gif-canvas").hidden = false;
         $("viewer-placeholder").hidden = true;
         $("viewer-zoom-wrap").hidden = false;
         $("viewer-controls").hidden = false;
         $("frame-slider").max = String(info.frames - 1);
         $("frame-slider").value = "0";
-        $("gif-status").dataset.base = `${info.frames} 帧 · ${info.width}×${info.height} · ${url.split("/").pop()}`;
+        $("gif-status").dataset.base = `${info.frames} 帧 · ${info.width}×${info.height} · GIF · ${url.split("/").pop()}`;
         syncPlaybackFpsFromMode();
         refreshFrameDelays();
 

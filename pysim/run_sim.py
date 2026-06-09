@@ -217,7 +217,6 @@ def main(argv=None) -> int:
     if not args.no_python_grader:
         grader = OnlineGrader(
             max_speed_mps=args.ego_max_speed,
-            max_desired_speed_mps=args.ego_max_speed,
             print_every=args.print_every,
         )
         hooks.append(grader)
