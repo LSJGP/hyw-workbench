@@ -331,12 +331,12 @@ class Handler(BaseHTTPRequestHandler):
                     "cpp_modes": CPP_MODES,
                     "reference_sources": REFERENCE_SOURCES,
                     "viz_gifs": _list_viz_gifs(),
-                    "planner_server": planner_server_status(),
+                    "planner_server": (ps := planner_server_status()),
                     "defaults": {
                         "planner": "local_dwa",
-                        "planner_address": "localhost:50051",
-                        "planner_host": DEFAULT_PLANNER_HOST,
-                        "planner_port": DEFAULT_PLANNER_PORT,
+                        "planner_address": ps["address"],
+                        "planner_host": ps["host"],
+                        "planner_port": ps["port"],
                         "metrics": default_metric_names(),
                         "dt": 0.1,
                         "desired_speed": 13.9,
@@ -468,13 +468,16 @@ def main() -> None:
 
     (OUTPUT_DIR / "batch").mkdir(parents=True, exist_ok=True)
     try:
-        ensure_planner_server(host=DEFAULT_PLANNER_HOST, port=DEFAULT_PLANNER_PORT)
+        actual_planner_port = ensure_planner_server(
+            host=DEFAULT_PLANNER_HOST, port=DEFAULT_PLANNER_PORT
+        )
     except Exception as e:
         print(f"[web] warning: planner_server not started: {e}", file=sys.stderr)
+        actual_planner_port = DEFAULT_PLANNER_PORT
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[web] http://{args.host}:{args.port}/")
     print(f"[web] workbench: {WORKBENCH_ROOT}")
-    ps = planner_server_status()
+    ps = planner_server_status(port=actual_planner_port)
     print(
         f"[web] planner gRPC: {ps['address']} "
         f"({'running' if ps['running'] else 'down'})"

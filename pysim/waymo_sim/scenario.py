@@ -93,6 +93,15 @@ def _pose(d: Optional[Dict]) -> Optional[Pose2D]:
     return Pose2D(x=float(d["x"]), y=float(d["y"]), yaw=float(d.get("yaw", 0.0)))
 
 
+def _protobuf_runtime_available() -> bool:
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("google.protobuf") is not None
+    except ModuleNotFoundError:
+        return False
+
+
 def _resolve_scenario_file(
     scenario_dir: Path, stem: str, input_format: str = "auto"
 ) -> Path:
@@ -102,8 +111,10 @@ def _resolve_scenario_file(
         return pb
     if input_format == "json":
         return js
-    # auto: prefer protobuf when available, otherwise fallback to json
-    return pb if pb.is_file() else js
+    # auto: prefer protobuf when runtime + files exist, else json
+    if pb.is_file() and _protobuf_runtime_available():
+        return pb
+    return js if js.is_file() else pb
 
 
 def _load_scenario_from_json(meta_path: Path, objs_path: Path, graph_path: Path) -> Scenario:
@@ -252,3 +263,73 @@ def scenario_dt(scenario: Scenario) -> float:
     if not diffs:
         return 0.1
     return float(sum(diffs) / len(diffs))
+
+
+_SCENARIO_TRIPLET_STEMS = ("scenario_meta", "dynamic_objects", "lane_graph")
+
+
+def _has_scenario_triplet(scenario_dir: Path, fmt: str) -> bool:
+    ext = "pb" if fmt == "proto" else "json"
+    return all((scenario_dir / f"{stem}.{ext}").is_file() for stem in _SCENARIO_TRIPLET_STEMS)
+
+
+def _map_route_available(scenario_dir: Path, fmt: str) -> Optional[bool]:
+    """Return whether init→goal lane routing works for this on-disk triplet."""
+    if not _has_scenario_triplet(scenario_dir, fmt):
+        return None
+    if fmt == "proto" and not _protobuf_runtime_available():
+        return None
+    try:
+        from waymo_sim.lane_graph import LaneGraph
+
+        scenario = load_scenario(scenario_dir, input_format=fmt)
+        if scenario.init_pose is None or scenario.goal_pose is None:
+            return False
+        lane_graph = LaneGraph.load(scenario.lane_graph_path)
+        start = lane_graph.closest_lane(
+            scenario.init_pose.x,
+            scenario.init_pose.y,
+            heading=scenario.init_pose.yaw,
+        )
+        goal = lane_graph.closest_lane(
+            scenario.goal_pose.x,
+            scenario.goal_pose.y,
+            heading=scenario.goal_pose.yaw,
+        )
+        if start is None or goal is None:
+            return False
+        return bool(lane_graph.shortest_path(start.id, goal.id))
+    except Exception:
+        return False
+
+
+def resolve_scenario_input_format(
+    scenario_dir: Path,
+    input_format: str = "auto",
+    *,
+    reference_source: str = "map",
+) -> str:
+    """Pick json/proto triplet for sim + viz when ``auto`` would otherwise fail routing."""
+    scenario_dir = Path(scenario_dir).expanduser().resolve()
+    if input_format in ("json", "proto"):
+        return input_format
+
+    has_json = _has_scenario_triplet(scenario_dir, "json")
+    has_pb = _has_scenario_triplet(scenario_dir, "proto")
+    if has_json and not has_pb:
+        return "json"
+    if has_pb and not has_json:
+        return "proto"
+    if not has_json and not has_pb:
+        return "auto"
+
+    if reference_source != "map":
+        return "proto" if has_pb else "json"
+
+    json_ok = _map_route_available(scenario_dir, "json")
+    pb_ok = _map_route_available(scenario_dir, "proto")
+    if pb_ok:
+        return "proto"
+    if json_ok:
+        return "json"
+    return "json" if has_json else "proto"

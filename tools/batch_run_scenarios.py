@@ -18,7 +18,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
+PYSIM_ROOT = WORKBENCH_ROOT / "pysim"
 sys.path.insert(0, str(WORKBENCH_ROOT))
+sys.path.insert(0, str(PYSIM_ROOT))
 from hyw_paths import (  # noqa: E402
     DEFAULT_GRADING_BIN,
     DEFAULT_METRICS,
@@ -41,6 +43,7 @@ from planner_server_manager import (  # noqa: E402
     ensure_planner_server,
     planner_server_status,
 )
+from waymo_sim.scenario import resolve_scenario_input_format  # noqa: E402
 
 DEFAULT_SIM_RUNNER_HINT = (
     "hyw-sim sim_runner + hyw-planner gRPC "
@@ -56,7 +59,7 @@ GEN_DIR = WORKBENCH_ROOT / "tools" / "gen"
 if str(GEN_DIR) not in sys.path:
     sys.path.insert(0, str(GEN_DIR))
 
-PLANNERS = ["local_dwa", "reference_tracker", "goal_seek"]
+PLANNERS = ["local_dwa", "reference_tracker", "goal_seek", "pdms_hack"]
 LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "off"]
 CPP_MODES = ["online", "offline", "both", "off"]
 REFERENCE_SOURCES = ["map", "sdc"]
@@ -216,6 +219,18 @@ def run_one_scenario(
         "passed": None,
     }
 
+    sim_input_format = resolve_scenario_input_format(
+        scenario_dir,
+        cfg.input_format,
+        reference_source=cfg.reference_source,
+    )
+    if sim_input_format != cfg.input_format:
+        _log(
+            log,
+            f"[batch] {scenario_name}: input-format {cfg.input_format} -> "
+            f"{sim_input_format} (map routing)",
+        )
+
     sim_cmd = [
         sys.executable,
         str(RUN_SIM),
@@ -224,7 +239,7 @@ def run_one_scenario(
         "--scenario-load",
         cfg.scenario_load,
         "--input-format",
-        cfg.input_format,
+        sim_input_format,
         "--planner",
         cfg.planner,
         "--reference-source",
@@ -246,14 +261,10 @@ def run_one_scenario(
         "--log-level",
         cfg.log_level,
     ]
-    planner_bin = (cfg.planner_bin or "").strip()
-    if not planner_bin and DEFAULT_PLANNER_BIN.is_file():
-        planner_bin = str(DEFAULT_PLANNER_BIN)
-    if planner_bin:
-        sim_cmd.extend(["--planner-bin", str(Path(planner_bin).expanduser().resolve())])
-        sim_cmd.extend(["--planner-port", str(cfg.planner_port)])
-    else:
-        sim_cmd.extend(["--planner-address", cfg.planner_address])
+    planner_address = cfg.planner_address
+    if cfg.planner_host and cfg.planner_port:
+        planner_address = f"{cfg.planner_host}:{cfg.planner_port}"
+    sim_cmd.extend(["--planner-address", planner_address])
     if cfg.log_dir:
         sim_cmd.extend(["--log-dir", str(Path(cfg.log_dir).expanduser().resolve())])
     elif cfg.log_level not in ("info", "off"):
@@ -321,6 +332,14 @@ def run_one_scenario(
             )
             result["gif"] = None
         else:
+            viz_input_format = sim_input_format
+            if viz_input_format == "auto":
+                if has_viz_json_inputs and not has_protobuf_runtime:
+                    viz_input_format = "json"
+                elif has_viz_pb_inputs:
+                    viz_input_format = "proto"
+                else:
+                    viz_input_format = "json"
             _log(log, f"\n=== [{scenario_name}] visualization ===")
             viz_cmd = [
                 sys.executable,
@@ -330,7 +349,7 @@ def run_one_scenario(
                 "--sim-log",
                 str(sim_log),
                 "--input-format",
-                cfg.input_format,
+                viz_input_format,
                 "--animate",
                 "--fps",
                 str(cfg.gif_fps),
@@ -354,7 +373,11 @@ def run_batch(
     if not cfg.scenario_names:
         raise ValueError("no scenarios selected")
 
-    ensure_planner_server(host=cfg.planner_host, port=cfg.planner_port, log=log)
+    cfg.planner_port = ensure_planner_server(
+        host=cfg.planner_host, port=cfg.planner_port, log=log
+    )
+    cfg.planner_address = f"{cfg.planner_host}:{cfg.planner_port}"
+    _log(log, f"[batch] planner gRPC {cfg.planner_address}")
 
     mpath = metrics_config_path or (
         OUTPUT_DIR / "batch" / f"metrics_{int(time.time())}.json"

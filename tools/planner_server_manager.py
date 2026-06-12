@@ -24,6 +24,7 @@ _POLL_INTERVAL_S = 0.25
 
 _planner_proc: Optional[subprocess.Popen] = None
 _managed_port: Optional[int] = None
+_planner_binary_mtime_at_start: Optional[float] = None
 
 
 def _log(cb: Optional[Callable[[str], None]], msg: str) -> None:
@@ -44,9 +45,64 @@ def is_planner_port_open(
         return False
 
 
-def planner_server_status(
+def _binary_mtime() -> Optional[float]:
+    if not DEFAULT_PLANNER_SERVER_BIN.is_file():
+        return None
+    return DEFAULT_PLANNER_SERVER_BIN.stat().st_mtime
+
+
+def _server_is_stale(
     host: str = DEFAULT_PLANNER_HOST, port: int = DEFAULT_PLANNER_PORT
+) -> bool:
+    """True when a listener exists but binary was rebuilt or process is external."""
+    if not is_planner_port_open(host, port):
+        return False
+    bin_mtime = _binary_mtime()
+    if bin_mtime is None:
+        return False
+    if _planner_proc is None or _planner_proc.poll() is not None:
+        return True
+    if _managed_port != port:
+        return True
+    if _planner_binary_mtime_at_start is None:
+        return True
+    return bin_mtime > _planner_binary_mtime_at_start + 1e-6
+
+
+def _kill_listener_on_port(port: int) -> None:
+    try:
+        subprocess.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True,
+            timeout=5.0,
+            check=False,
+        )
+    except FileNotFoundError:
+        pass
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not is_planner_port_open(port=port):
+            return
+        time.sleep(0.2)
+
+
+def _reserve_planner_port(preferred: int = DEFAULT_PLANNER_PORT) -> int:
+    if not is_planner_port_open(port=preferred):
+        return preferred
+    _kill_listener_on_port(preferred)
+    if not is_planner_port_open(port=preferred):
+        return preferred
+    for port in range(preferred + 1, preferred + 50):
+        if not is_planner_port_open(port=port):
+            return port
+    raise RuntimeError(f"no free planner port near {preferred}")
+
+
+def planner_server_status(
+    host: str = DEFAULT_PLANNER_HOST, port: Optional[int] = None
 ) -> dict:
+    if port is None:
+        port = _managed_port if _managed_port is not None else DEFAULT_PLANNER_PORT
     bin_path = DEFAULT_PLANNER_SERVER_BIN
     return {
         "host": host,
@@ -76,7 +132,7 @@ def _build_planner_server(log: Optional[Callable[[str], None]]) -> None:
 def _start_process(
     port: int, log: Optional[Callable[[str], None]]
 ) -> subprocess.Popen:
-    global _planner_proc, _managed_port
+    global _planner_proc, _managed_port, _planner_binary_mtime_at_start
     bin_path = DEFAULT_PLANNER_SERVER_BIN
     if not bin_path.is_file():
         _build_planner_server(log)
@@ -94,6 +150,7 @@ def _start_process(
     )
     _planner_proc = proc
     _managed_port = port
+    _planner_binary_mtime_at_start = _binary_mtime()
 
     def _drain() -> None:
         assert proc.stdout is not None
@@ -111,18 +168,39 @@ def ensure_planner_server(
     port: int = DEFAULT_PLANNER_PORT,
     log: Optional[Callable[[str], None]] = None,
     auto_build: bool = True,
-) -> None:
+) -> int:
     """Ensure gRPC planner_server is listening; start a managed process if needed."""
-    if is_planner_port_open(host, port):
-        _log(log, f"[planner] already up at {host}:{port}")
-        return
-
     global _planner_proc
-    if _planner_proc is not None and _planner_proc.poll() is None:
-        if _managed_port == port and is_planner_port_open(host, port):
-            return
-        _log(log, "[planner] restarting managed planner_server …")
+
+    if is_planner_port_open(host, port) and not _server_is_stale(host, port):
+        _log(log, f"[planner] already up at {host}:{port}")
+        return port
+
+    if is_planner_port_open(host, port):
+        _log(
+            log,
+            f"[planner] stale planner_server on {host}:{port} "
+            "(binary rebuilt or foreign process); restarting …",
+        )
         stop_planner_server(log=log)
+        _kill_listener_on_port(port)
+
+    if is_planner_port_open(host, port):
+        alt = _reserve_planner_port(port)
+        if alt != port:
+            _log(
+                log,
+                f"[planner] warning: could not free {host}:{port}; "
+                f"using {host}:{alt} instead",
+            )
+            port = alt
+
+    if _planner_proc is not None and _planner_proc.poll() is None:
+        if _managed_port != port:
+            stop_planner_server(log=log)
+        else:
+            _log(log, "[planner] restarting managed planner_server …")
+            stop_planner_server(log=log)
 
     if not DEFAULT_PLANNER_SERVER_BIN.is_file():
         if auto_build:
@@ -143,7 +221,7 @@ def ensure_planner_server(
             )
         if is_planner_port_open(host, port):
             _log(log, f"[planner] ready at {host}:{port}")
-            return
+            return port
         time.sleep(_POLL_INTERVAL_S)
 
     raise RuntimeError(
@@ -152,7 +230,7 @@ def ensure_planner_server(
 
 
 def stop_planner_server(log: Optional[Callable[[str], None]] = None) -> None:
-    global _planner_proc, _managed_port
+    global _planner_proc, _managed_port, _planner_binary_mtime_at_start
     if _planner_proc is None:
         return
     if _planner_proc.poll() is None:
@@ -165,6 +243,7 @@ def stop_planner_server(log: Optional[Callable[[str], None]] = None) -> None:
             _planner_proc.wait(timeout=2.0)
     _planner_proc = None
     _managed_port = None
+    _planner_binary_mtime_at_start = None
 
 
 atexit.register(lambda: stop_planner_server())
