@@ -47,10 +47,7 @@ sim_*.log
 *~
 .DS_Store
 Thumbs.db
-<<<<<<< HEAD
 
 # 本地一次性远程 SSH 配置（不提交）
 .local-setup/
-=======
 scenarios/
->>>>>>> 09e9425 (add hack planner & add planner port 50052)
