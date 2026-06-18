@@ -42,6 +42,8 @@ class NpcView:
     heading: float
     length: float
     width: float
+    vx: float = 0.0
+    vy: float = 0.0
 
 
 @dataclass
@@ -50,6 +52,7 @@ class StaticMapDraw:
     road_lines: List[dict]
     road_edges: List[dict]
     crosswalks: List[dict]
+    driveways: List[dict]
 
 
 def _wrap_pi(a: float) -> float:
@@ -95,6 +98,13 @@ def load_static_map(path: Path) -> StaticMapDraw:
                 }
                 for c in sm.crosswalks
             ],
+            driveways=[
+                {
+                    "id": int(d.id),
+                    "polygon": [[float(p.x), float(p.y), float(p.z)] for p in d.polygon],
+                }
+                for d in sm.driveways
+            ],
         )
 
     with open(path, encoding="utf-8") as f:
@@ -104,6 +114,7 @@ def load_static_map(path: Path) -> StaticMapDraw:
         road_lines=doc.get("road_lines", []),
         road_edges=doc.get("road_edges", []),
         crosswalks=doc.get("crosswalks", []),
+        driveways=doc.get("driveways", []),
     )
 
 
@@ -183,15 +194,22 @@ def _interp_npcs(scenario: Scenario, lo: int, hi: int, a: float) -> List[NpcView
 def npcs_from_frame(fr: dict) -> List[NpcView]:
     out: List[NpcView] = []
     for n in fr.get("npcs", []):
+        raw_id = n.get("id", 0)
+        try:
+            npc_id = int(raw_id)
+        except (TypeError, ValueError):
+            npc_id = 0
         out.append(
             NpcView(
-                id=int(n.get("id", 0)),
+                id=npc_id,
                 object_type=str(n.get("object_type", "VEHICLE")),
                 x=float(n.get("x", 0)),
                 y=float(n.get("y", 0)),
                 heading=float(n.get("heading", 0)),
                 length=float(n.get("length", 4.0)),
                 width=float(n.get("width", 1.8)),
+                vx=float(n.get("vx", 0.0)),
+                vy=float(n.get("vy", 0.0)),
             )
         )
     return out
@@ -205,8 +223,16 @@ def npcs_for_frame(fr: dict, scenario: Scenario) -> List[NpcView]:
     return npcs
 
 
-def _npc_to_dict(n: NpcView) -> Dict[str, Any]:
+def _ego_motion(fr: dict) -> Dict[str, float]:
+    vs = fr.get("vehicle_state", fr.get("ego", {}))
     return {
+        "speed": float(vs.get("speed", 0.0)),
+        "heading": float(vs.get("heading", 0.0)),
+    }
+
+
+def _npc_to_dict(n: NpcView, _ego: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    doc: Dict[str, Any] = {
         "id": n.id,
         "object_type": n.object_type,
         "x": n.x,
@@ -214,7 +240,10 @@ def _npc_to_dict(n: NpcView) -> Dict[str, Any]:
         "heading": n.heading,
         "length": n.length,
         "width": n.width,
+        "vx": n.vx,
+        "vy": n.vy,
     }
+    return doc
 
 
 def compute_plot_rect(fig, ax, dpi: int) -> Dict[str, float]:
@@ -311,7 +340,14 @@ def build_overlay_doc(
     overlay_frames: List[Dict[str, Any]] = []
     for i, fr in enumerate(frames):
         npcs = npcs_for_frame(fr, scenario)
-        overlay_frames.append({"index": i, "npcs": [_npc_to_dict(n) for n in npcs]})
+        ego_motion = _ego_motion(fr)
+        overlay_frames.append(
+            {
+                "index": i,
+                "ego": ego_motion,
+                "npcs": [_npc_to_dict(n, ego_motion) for n in npcs],
+            }
+        )
 
     return {
         "version": 1,
@@ -434,13 +470,24 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _scenario_bbox(scenario: Scenario) -> Optional[Tuple[float, float, float, float]]:
+    meta = scenario.meta.get("bbox") or {}
+    try:
+        xmin = float(meta.get("xmin", 0.0))
+        ymin = float(meta.get("ymin", 0.0))
+        xmax = float(meta.get("xmax", 0.0))
+        ymax = float(meta.get("ymax", 0.0))
+    except (TypeError, ValueError):
+        return None
+    if xmax <= xmin or ymax <= ymin:
+        return None
+    return xmin, ymin, xmax, ymax
+
+
 def _setup_axes(fig, ax, scenario: Scenario, margin: float = 15.0):
-    meta = scenario.meta.get("bbox", {})
-    if meta:
-        xmin = float(meta.get("xmin", -100))
-        ymin = float(meta.get("ymin", -100))
-        xmax = float(meta.get("xmax", 100))
-        ymax = float(meta.get("ymax", 100))
+    bbox = _scenario_bbox(scenario)
+    if bbox:
+        xmin, ymin, xmax, ymax = bbox
     else:
         xmin = ymin = -100
         xmax = ymax = 100
@@ -457,6 +504,14 @@ def _polyline_xy(poly: Sequence[Sequence[float]]) -> List[Tuple[float, float]]:
 
 
 def _draw_full_map(ax, static_map: StaticMapDraw, lane_graph: LaneGraph) -> None:
+    for dw in static_map.driveways:
+        poly = _polyline_xy(dw.get("polygon", []))
+        if len(poly) < 3:
+            continue
+        xs = [p[0] for p in poly] + [poly[0][0]]
+        ys = [p[1] for p in poly] + [poly[0][1]]
+        ax.fill(xs, ys, color="#d0d0d0", alpha=0.35, zorder=0)
+
     for cw in static_map.crosswalks:
         poly = _polyline_xy(cw.get("polygon", []))
         if len(poly) < 3:
@@ -703,12 +758,9 @@ def _sdc_recorded_xy(scenario: Scenario) -> List[Tuple[float, float]]:
 
 
 def _world_bounds(scenario: Scenario, margin: float = 15.0) -> Dict[str, float]:
-    meta = scenario.meta.get("bbox", {})
-    if meta:
-        xmin = float(meta.get("xmin", -100))
-        ymin = float(meta.get("ymin", -100))
-        xmax = float(meta.get("xmax", 100))
-        ymax = float(meta.get("ymax", 100))
+    bbox = _scenario_bbox(scenario)
+    if bbox:
+        xmin, ymin, xmax, ymax = bbox
     else:
         xmin = ymin = -100
         xmax = ymax = 100
@@ -730,6 +782,10 @@ def _frame_to_viz_dict(
     vs = fr.get("vehicle_state", fr.get("ego", {}))
     ev = fr.get("ego_vehicle", {})
     npcs = npcs_for_frame(fr, scenario)
+    ego_motion = {
+        "speed": float(vs.get("speed", 0)),
+        "heading": float(vs.get("heading", 0)),
+    }
     return {
         "index": int(fr.get("frame_id", 0)),
         "timestamp_us": int(fr.get("timestamp_us", 0)),
@@ -742,7 +798,7 @@ def _frame_to_viz_dict(
             "width": float(ev.get("width", args.ego_width)),
             "rear_overhang": float(ev.get("rear_overhang", args.ego_rear_overhang)),
         },
-        "npcs": [_npc_to_dict(n) for n in npcs],
+        "npcs": [_npc_to_dict(n, ego_motion) for n in npcs],
     }
 
 
@@ -815,6 +871,10 @@ def build_viz_scene_doc(
         "plot_rect": plot_rect,
         "background": "#ffffff",
         "map": {
+            "driveways": [
+                _polyline_to_xy_list(dw.get("polygon", []))
+                for dw in static_map.driveways
+            ],
             "crosswalks": [
                 _polyline_to_xy_list(cw.get("polygon", []))
                 for cw in static_map.crosswalks
@@ -873,7 +933,8 @@ def main() -> int:
     print(
         f"[viz] scenario={scenario.scenario_id} lanes={len(lane_graph.lanes)} "
         f"road_lines={len(static_map.road_lines)} road_edges={len(static_map.road_edges)} "
-        f"crosswalks={len(static_map.crosswalks)} route_lanes={len(route_ids)} "
+        f"crosswalks={len(static_map.crosswalks)} driveways={len(static_map.driveways)} "
+        f"route_lanes={len(route_ids)} "
         f"ref_pts={len(route_xy)} sim_frames={len(frames)}"
     )
     sdc_xy = _sdc_recorded_xy(scenario) if args.show_sdc_track else None

@@ -94,6 +94,9 @@
       font-size: 0.82rem;
       cursor: pointer;
     }
+    .checks label[hidden] {
+      display: none !important;
+    }
     .checks input { width: auto; margin: 0; }
     .inline { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.45rem; }
     .inline input { width: auto; }
@@ -144,6 +147,24 @@
       padding: 0.35rem 0.45rem;
       font-size: 0.85rem;
     }
+    .scene-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex-shrink: 0;
+    }
+    .scene-nav button {
+      padding: 0.35rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    .scene-nav button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .scene-nav button:disabled { opacity: 0.35; cursor: not-allowed; }
     .viewer-stage {
       flex: 1;
       overflow: auto;
@@ -177,6 +198,10 @@
       text-align: center;
       padding: 2rem;
       font-size: 0.9rem;
+    }
+    .viewer-placeholder[hidden] {
+      display: none !important;
+      pointer-events: none;
     }
     .viewer-controls {
       flex-shrink: 0;
@@ -354,9 +379,12 @@
     <aside class="console">
       <section>
         <h2>场景 scenarios/</h2>
+        <label for="scenario-filter">筛选（正则）</label>
+        <input type="text" id="scenario-filter" placeholder="例如 waymo 或 ^waymo_complex_27$" />
         <div class="inline">
-          <button type="button" id="sel-all" style="font-size:0.72rem">全选</button>
-          <button type="button" id="sel-none" style="font-size:0.72rem">清空</button>
+          <button type="button" id="sel-all" style="font-size:0.72rem" title="全选当前筛选结果">全选</button>
+          <button type="button" id="sel-none" style="font-size:0.72rem" title="清空当前筛选结果">清空</button>
+          <span id="scenario-filter-hint" class="hint" style="margin:0;flex:1;text-align:right"></span>
         </div>
         <div class="checks" id="scenario-list">加载中…</div>
       </section>
@@ -450,6 +478,10 @@
         <select id="gif-select">
           <option value="">— 选择 GIF —</option>
         </select>
+        <div class="scene-nav">
+          <button type="button" id="scene-prev" title="上一个场景">◀ 上一场景</button>
+          <button type="button" id="scene-next" title="下一个场景">下一场景 ▶</button>
+        </div>
         <label for="playback-mode">播放速度</label>
         <select id="playback-mode" title="仿真原速 = 1/dt；GIF速度 = 生成 fps">
           <option value="sim" selected>仿真原速</option>
@@ -657,26 +689,45 @@
 
     function clientToCanvasPixel(clientX, clientY) {
       const canvas = activeViewCanvas();
-      if (!canvas || canvas.hidden) return null;
+      if (!canvas || !canvas.isConnected || $("viewer-zoom-wrap").hidden) return null;
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return null;
+      // Match viz scene logical pixels (1200×1000), not canvas buffer (DPR-scaled).
+      const logicalW = gifState.width || Number(canvas.dataset.logicalWidth) || rect.width;
+      const logicalH = gifState.height || Number(canvas.dataset.logicalHeight) || rect.height;
       return {
-        px: (clientX - rect.left) * (canvas.width / rect.width),
-        py: (clientY - rect.top) * (canvas.height / rect.height),
+        px: (clientX - rect.left) * (logicalW / rect.width),
+        py: (clientY - rect.top) * (logicalH / rect.height),
+      };
+    }
+
+    function plotMetrics(overlay) {
+      const pr = overlay.plot_rect || { left: 0, top: 0, width: overlay.width, height: overlay.height };
+      const { xmin, ymin, xmax, ymax } = overlay.world;
+      const worldW = xmax - xmin;
+      const worldH = ymax - ymin;
+      const scale = Math.min(pr.width / worldW, pr.height / worldH);
+      const plotW = worldW * scale;
+      const plotH = worldH * scale;
+      return {
+        scale,
+        offsetX: pr.left + (pr.width - plotW) / 2,
+        offsetY: pr.top + (pr.height - plotH) / 2,
       };
     }
 
     function pixelToWorld(px, py, overlay) {
       const { xmin, ymin, xmax, ymax } = overlay.world;
-      const pr = overlay.plot_rect;
-      const wx = xmin + ((px - pr.left) / pr.width) * (xmax - xmin);
-      const wy = ymax - ((py - pr.top) / pr.height) * (ymax - ymin);
-      return { wx, wy };
+      const { scale, offsetX, offsetY } = plotMetrics(overlay);
+      return {
+        wx: xmin + (px - offsetX) / scale,
+        wy: ymax - (py - offsetY) / scale,
+      };
     }
 
-    function pointInNpcOBB(wx, wy, npc) {
-      const hl = Math.max(0.5, npc.length * 0.5);
-      const hw = Math.max(0.3, npc.width * 0.5);
+    function pointInNpcOBB(wx, wy, npc, slop = 1.15) {
+      const hl = Math.max(0.5, npc.length * 0.5) * slop;
+      const hw = Math.max(0.3, npc.width * 0.5) * slop;
       const dx = wx - npc.x;
       const dy = wy - npc.y;
       const c = Math.cos(npc.heading);
@@ -702,11 +753,12 @@
 
     function showNpcTooltip(npc, clientX, clientY) {
       const tip = $("npc-tooltip");
+      const hasVel = npc.vx != null && npc.vy != null;
       tip.innerHTML =
-        `<div>id: ${npc.id}</div>` +
-        `<div>x: ${npc.x.toFixed(2)} m</div>` +
-        `<div>y: ${npc.y.toFixed(2)} m</div>` +
-        `<div class="npc-type">${npc.object_type || "NPC"}</div>`;
+        `<div>x ${npc.x.toFixed(2)} y ${npc.y.toFixed(2)}</div>` +
+        (hasVel
+          ? `<div>vx ${Number(npc.vx).toFixed(2)} vy ${Number(npc.vy).toFixed(2)}</div>`
+          : "");
       tip.classList.add("visible");
       tip.setAttribute("aria-hidden", "false");
       const offset = 14;
@@ -719,14 +771,8 @@
         hideNpcTooltip();
         return;
       }
-      if (gifState.viewerMode === "webgl" && gifState.webgl) {
-        const hit = gifState.webgl.hitTestNpc(e.clientX, e.clientY);
-        if (hit) showNpcTooltip(hit, e.clientX, e.clientY);
-        else hideNpcTooltip();
-        return;
-      }
       const overlay = gifState.overlay;
-      if (!overlay || !overlay.frames || !overlay.frames.length) {
+      if (!overlay?.frames?.length) {
         hideNpcTooltip();
         return;
       }
@@ -736,7 +782,7 @@
         return;
       }
       const frame = overlay.frames[gifState.index];
-      if (!frame || !frame.npcs || !frame.npcs.length) {
+      if (!frame?.npcs?.length) {
         hideNpcTooltip();
         return;
       }
@@ -992,8 +1038,11 @@
       if (!url) {
         $("gif-status").textContent = "";
         $("viewer-placeholder").textContent = "请从上方下拉框选择 GIF";
+        updateSceneNavButtons();
         return;
       }
+      updateResultsActiveRow(url);
+      updateSceneNavButtons();
 
       try {
         const relFile = urlToRelFile(url);
@@ -1020,7 +1069,11 @@
                 width: scene.width,
                 height: scene.height,
               },
-              frames: scene.frames.map((fr) => ({ index: fr.index, npcs: fr.npcs || [] })),
+              frames: scene.frames.map((fr) => ({
+                index: fr.index,
+                ego: fr.ego || null,
+                npcs: fr.npcs || [],
+              })),
             };
             $("viewer-placeholder").hidden = true;
             $("viewer-zoom-wrap").hidden = false;
@@ -1088,6 +1141,38 @@
       return m ? `/output/${m[1]}` : "";
     }
 
+    function getGifSelectItems() {
+      return [...$("gif-select").options].filter((o) => o.value);
+    }
+
+    function updateSceneNavButtons() {
+      const items = getGifSelectItems();
+      const current = $("gif-select").value;
+      const idx = items.findIndex((o) => o.value === current);
+      $("scene-prev").disabled = idx <= 0;
+      $("scene-next").disabled = idx < 0 || idx >= items.length - 1;
+    }
+
+    function updateResultsActiveRow(url) {
+      $("results").querySelectorAll("tr.clickable").forEach((tr) => {
+        tr.classList.toggle("active", tr.dataset.gifUrl === url);
+      });
+    }
+
+    function loadAdjacentScene(delta) {
+      const items = getGifSelectItems();
+      if (!items.length) return;
+      const current = $("gif-select").value;
+      let idx = items.findIndex((o) => o.value === current);
+      if (idx < 0) idx = delta > 0 ? -1 : items.length;
+      const nextIdx = idx + delta;
+      if (nextIdx < 0 || nextIdx >= items.length) return;
+      const url = items[nextIdx].value;
+      $("gif-select").value = url;
+      updateResultsActiveRow(url);
+      loadGif(url);
+    }
+
     function populateGifSelect(items, selectedUrl) {
       const sel = $("gif-select");
       const current = selectedUrl || sel.value;
@@ -1102,6 +1187,7 @@
       if (current && [...sel.options].some((o) => o.value === current)) {
         sel.value = current;
       }
+      updateSceneNavButtons();
     }
 
     function buildGifCatalog(metaGifs, jobResult) {
@@ -1127,26 +1213,115 @@
     /* ── Meta / Job ── */
     let metaGifs = [];
 
+    function scenarioFilterRegex() {
+      const raw = $("scenario-filter").value.trim();
+      if (!raw) return null;
+      try {
+        return new RegExp(raw, "i");
+      } catch (_) {
+        return "invalid";
+      }
+    }
+
+    function isScenarioFilterActive() {
+      return $("scenario-filter").value.trim().length > 0;
+    }
+
+    function hiddenCheckedScenarioInputs() {
+      return [...document.querySelectorAll("#scenario-list label[hidden] input:checked")];
+    }
+
+    function updateScenarioFilterHint(labels, visible, re) {
+      const hint = $("scenario-filter-hint");
+      const hiddenChecked = hiddenCheckedScenarioInputs().length;
+      const visibleChecked = visibleScenarioInputs().filter((e) => e.checked).length;
+      if (re === "invalid") return;
+      if (re) {
+        let text = visible ? `${visible}/${labels.length}` : `无匹配 0/${labels.length}`;
+        text += ` · 已选 ${visibleChecked}`;
+        if (hiddenChecked > 0) {
+          text += `（隐藏 ${hiddenChecked}）`;
+          hint.style.color = "var(--warn)";
+        } else {
+          hint.style.color = visible ? "" : "var(--warn)";
+        }
+        hint.textContent = text;
+      } else {
+        const totalChecked = [...document.querySelectorAll("#scenario-list input:checked")].length;
+        hint.style.color = "";
+        hint.textContent = labels.length ? `共 ${labels.length} · 已选 ${totalChecked}` : "";
+      }
+    }
+
+    function applyScenarioFilter() {
+      const re = scenarioFilterRegex();
+      const labels = [...document.querySelectorAll("#scenario-list label[data-scenario-name]")];
+      const hint = $("scenario-filter-hint");
+      let visible = 0;
+      if (re === "invalid") {
+        hint.textContent = "无效正则";
+        hint.style.color = "var(--fail)";
+        labels.forEach((lab) => {
+          lab.hidden = false;
+          visible++;
+        });
+        return;
+      }
+      hint.style.color = "";
+      labels.forEach((lab) => {
+        const match = !re || re.test(lab.dataset.scenarioName);
+        lab.hidden = !match;
+        if (match) visible++;
+      });
+      updateScenarioFilterHint(labels, visible, re);
+    }
+
+    function renderScenarioList(scenarios) {
+      const scenBox = $("scenario-list");
+      scenBox.innerHTML = "";
+      if (!scenarios.length) {
+        scenBox.textContent = "scenarios/ 下无有效场景";
+        $("scenario-filter-hint").textContent = "";
+        return;
+      }
+      scenarios.forEach((s) => {
+        const lab = document.createElement("label");
+        lab.dataset.scenarioName = s.name;
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = s.name;
+        cb.checked = true;
+        cb.addEventListener("change", onScenarioCheckboxChange);
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + s.name));
+        scenBox.appendChild(lab);
+      });
+      applyScenarioFilter();
+    }
+
+    function visibleScenarioInputs() {
+      return [...document.querySelectorAll("#scenario-list label:not([hidden]) input")];
+    }
+
+    function selectedScenarios() {
+      const inputs = isScenarioFilterActive()
+        ? visibleScenarioInputs()
+        : [...document.querySelectorAll("#scenario-list input")];
+      return inputs.filter((e) => e.checked).map((e) => e.value);
+    }
+
+    function onScenarioCheckboxChange() {
+      const labels = [...document.querySelectorAll("#scenario-list label[data-scenario-name]")];
+      const visible = labels.filter((lab) => !lab.hidden).length;
+      updateScenarioFilterHint(labels, visible, scenarioFilterRegex());
+    }
+
     async function loadMeta() {
       const r = await fetch("/api/meta");
       const meta = await r.json();
       metaGifs = meta.viz_gifs || [];
 
-      const scenBox = $("scenario-list");
-      scenBox.innerHTML = "";
-      if (!meta.scenarios.length) {
-        scenBox.textContent = "scenarios/ 下无有效场景";
-      }
-      meta.scenarios.forEach((s) => {
-        const lab = document.createElement("label");
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.value = s.name;
-        cb.checked = true;
-        lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(" " + s.name));
-        scenBox.appendChild(lab);
-      });
+      renderScenarioList(meta.scenarios);
 
       $("planner").innerHTML = meta.planners.map((p) => `<option value="${p}">${p}</option>`).join("");
       $("reference-source").innerHTML = meta.reference_sources.map((p) => `<option value="${p}">${p}</option>`).join("");
@@ -1205,21 +1380,32 @@
       populateGifSelect(buildGifCatalog(metaGifs));
     }
 
-    function selectedScenarios() {
-      return [...document.querySelectorAll("#scenario-list input:checked")].map((e) => e.value);
-    }
     function selectedMetrics() {
       return [...document.querySelectorAll("#metric-list input:checked")].map((e) => e.value);
     }
 
-    $("sel-all").onclick = () => document.querySelectorAll("#scenario-list input").forEach((e) => (e.checked = true));
-    $("sel-none").onclick = () => document.querySelectorAll("#scenario-list input").forEach((e) => (e.checked = false));
+    $("scenario-filter").addEventListener("input", applyScenarioFilter);
+    $("sel-all").onclick = () => {
+      visibleScenarioInputs().forEach((e) => (e.checked = true));
+      onScenarioCheckboxChange();
+    };
+    $("sel-none").onclick = () => {
+      visibleScenarioInputs().forEach((e) => (e.checked = false));
+      onScenarioCheckboxChange();
+    };
 
     async function startJob() {
       const scenarios = selectedScenarios();
+      const hiddenChecked = hiddenCheckedScenarioInputs().length;
       if (!scenarios.length) {
         alert("请至少选择一个场景");
         return;
+      }
+      if (isScenarioFilterActive() && hiddenChecked > 0) {
+        const ok = confirm(
+          `当前筛选结果中已选 ${scenarios.length} 个场景。\n另有 ${hiddenChecked} 个隐藏项仍勾选，本次不会运行。\n\n继续提交？`
+        );
+        if (!ok) return;
       }
       const body = {
         scenarios,
@@ -1335,6 +1521,8 @@
     /* ── 事件绑定 ── */
     $("run-btn").onclick = startJob;
     $("gif-select").onchange = () => loadGif($("gif-select").value);
+    $("scene-prev").onclick = () => loadAdjacentScene(-1);
+    $("scene-next").onclick = () => loadAdjacentScene(1);
     $("playback-mode").onchange = () => applyPlaybackSpeedChange();
     $("playback-fps").onchange = () => {
       if ($("playback-mode").value !== "custom") {
@@ -1368,6 +1556,7 @@
     $("viewer-stage").addEventListener("mousedown", handleViewerMouseDown);
     $("viewer-stage").addEventListener("mousemove", handleNpcHover);
     $("viewer-stage").addEventListener("mouseleave", hideNpcTooltip);
+    $("viewer-zoom-wrap").addEventListener("mousemove", handleNpcHover);
     window.addEventListener("mousemove", handleViewerMouseMove);
     window.addEventListener("mouseup", handleViewerMouseUp);
 

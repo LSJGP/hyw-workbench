@@ -236,6 +236,12 @@ def _load_scenario_from_proto(meta_path: Path, objs_path: Path, graph_path: Path
             "source": meta_pb.source,
             "scenario_id": meta_pb.scenario_id,
             "scenario_index": int(meta_pb.scenario_index),
+            "bbox": {
+                "xmin": float(meta_pb.bbox.xmin),
+                "ymin": float(meta_pb.bbox.ymin),
+                "xmax": float(meta_pb.bbox.xmax),
+                "ymax": float(meta_pb.bbox.ymax),
+            },
         },
         dynamic_objects_path=objs_path,
     )

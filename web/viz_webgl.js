@@ -4,6 +4,7 @@
 import { Application, Container, Graphics } from "https://cdn.jsdelivr.net/npm/pixi.js@8.9.1/dist/pixi.mjs";
 
 const COLORS = {
+  driveway: 0xd0d0d0,
   crosswalk: 0xe8eaed,
   roadEdge: 0x5f6368,
   roadLine: 0xfbbc04,
@@ -107,6 +108,11 @@ export class VizWebGLRenderer {
     });
     this.hostEl.innerHTML = "";
     this.hostEl.appendChild(this.app.canvas);
+    const canvas = this.app.canvas;
+    if (canvas) {
+      canvas.dataset.logicalWidth = String(width);
+      canvas.dataset.logicalHeight = String(height);
+    }
 
     this.world = new Container();
     this.staticLayer = new Graphics();
@@ -139,9 +145,11 @@ export class VizWebGLRenderer {
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
+    const logicalW = Number(canvas.dataset.logicalWidth) || this.scene?.width || rect.width;
+    const logicalH = Number(canvas.dataset.logicalHeight) || this.scene?.height || rect.height;
     return {
-      px: (clientX - rect.left) * (canvas.width / rect.width),
-      py: (clientY - rect.top) * (canvas.height / rect.height),
+      px: (clientX - rect.left) * (logicalW / rect.width),
+      py: (clientY - rect.top) * (logicalH / rect.height),
     };
   }
 
@@ -261,6 +269,9 @@ export class VizWebGLRenderer {
     g.clear();
     const map = this.scene.map || {};
 
+    for (const poly of map.driveways || []) {
+      this._drawFilledPoly(g, poly, COLORS.driveway, 0.35);
+    }
     for (const poly of map.crosswalks || []) {
       this._drawFilledPoly(g, poly, COLORS.crosswalk, 0.45);
     }

@@ -6,7 +6,7 @@
 
 | 路径 | 说明 |
 |------|------|
-| `tools/` | `batch_run_scenarios.py`、`metric_discovery.py`（自动扫描 metrics）、`viz_sim.py`、Waymo 转换等 |
+| `tools/` | `batch_run_scenarios.py`、`filter_complex_scenarios.py`（Waymo 复杂场景筛选）、`metric_discovery.py`（自动扫描 metrics）、`viz_sim.py`、Waymo 转换等 |
 | `web/` | 本地 Dashboard |
 | `scenarios/` | 示例 JSON 场景 |
 | `pysim/` | `viz_sim` 使用的 `waymo_sim` 包 |
@@ -23,6 +23,18 @@ source hyw.env
 ./start_dashboard.sh
 # 或 CLI
 python3 tools/batch_run_scenarios.py --scenarios waymo_scenario_5
+```
+
+### Waymo 复杂场景筛选
+
+从 TFRecord 中按规则（长距离 / 过路口 / 路口转弯）筛选复杂场景，仅将命中项转换到 `scenarios/waymo_complex_<idx>/`：
+
+```bash
+# 预览（不转换）
+./tools/filter_complex_scenarios.py --dry-run --limit 200
+
+# 保存命中场景
+./tools/filter_complex_scenarios.py --limit 500 --require-intersection
 ```
 
 ### Metrics 列表（Dashboard）
